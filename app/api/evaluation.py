@@ -13,12 +13,26 @@ class RenderTestRequest(BaseModel):
     seed: Optional[int] = 42
     steps: Optional[int] = 30
     model_filename: Optional[str] = None
+    base_checkpoint: Optional[str] = None
     aspect_ratio: Optional[str] = "1:1"
     framing_mode: Optional[str] = "pad"
 
 class DeployComfyRequest(BaseModel):
     project_dir: str
     model_filename: Optional[str] = None
+
+@router.get("/base_checkpoints")
+def list_base_checkpoints():
+    """Lists available SDXL and diffusion base checkpoints installed in ComfyUI."""
+    try:
+        checkpoints = EvaluationService.get_available_base_checkpoints()
+        return {
+            "success": True,
+            "count": len(checkpoints),
+            "checkpoints": checkpoints
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/models")
 def list_models(project_dir: str = Query(..., description="Project directory path")):
@@ -51,7 +65,7 @@ def inspect_model(
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/analytics")
-def get_analytics(
+def get_training_analytics(
     project_dir: str = Query(..., description="Project directory path"),
     model_filename: Optional[str] = Query(None, description="Safetensors filename")
 ):
@@ -83,6 +97,7 @@ def test_render(req: RenderTestRequest):
             seed=req.seed if req.seed is not None else 42,
             steps=req.steps or 30,
             model_filename=req.model_filename,
+            base_checkpoint=req.base_checkpoint,
             aspect_ratio=req.aspect_ratio or "1:1",
             framing_mode=req.framing_mode or "pad"
         )

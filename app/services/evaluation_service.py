@@ -29,7 +29,8 @@ class EvaluationService:
     @classmethod
     def list_trained_models(cls, project_dir: str) -> List[Dict[str, Any]]:
         """
-        Lists all trained .safetensors files in the project's Training/output directory.
+        Lists all trained .safetensors files in the project's Training/output directory,
+        validating whether each is a genuine trained LoRA or a legacy stub.
         """
         out_dir = cls.get_output_dir(project_dir)
         models = []
@@ -38,38 +39,57 @@ class EvaluationService:
             stat = f.stat()
             size_kb = round(stat.st_size / 1024, 1)
             size_mb = round(stat.st_size / (1024 * 1024), 2)
+            is_genuine = stat.st_size >= 5 * 1024 * 1024 # genuine SDXL LoRA is typically 20MB - 100MB+
 
             # Try to read paired metrics file if present
             metrics_file = f.with_suffix(".metrics.json")
             has_metrics = metrics_file.exists()
-            base_model_hint = "unknown"
+            metrics_data = {}
+            if has_metrics:
+                try:
+                    metrics_data = json.loads(metrics_file.read_text(encoding="utf-8"))
+                except Exception:
+                    pass
 
-            name_lower = f.stem.lower()
-            if "flux" in name_lower:
-                base_model_hint = "flux-1-dev"
-            elif "qwen" in name_lower:
-                base_model_hint = "qwen-image"
-            elif "sdxl" in name_lower:
-                base_model_hint = "sdxl-1.0"
-            elif "wan" in name_lower:
-                base_model_hint = "wan-2.1-turbo" if "turbo" in name_lower else "wan-2.1-t2v"
-            elif "ltx" in name_lower:
-                base_model_hint = "ltx-video-turbo" if "turbo" in name_lower else "ltx-video"
-            elif "z-image" in name_lower or "zimage" in name_lower:
-                base_model_hint = "z-image"
-            elif "minimax" in name_lower:
-                base_model_hint = "minimax-video"
-            elif "cogvideo" in name_lower:
-                base_model_hint = "cogvideox-5b"
+            base_model_hint = metrics_data.get("base_model", "unknown")
+            if base_model_hint == "unknown":
+                name_lower = f.stem.lower()
+                if "flux" in name_lower:
+                    base_model_hint = "flux-1-dev"
+                elif "qwen" in name_lower:
+                    base_model_hint = "qwen-image"
+                elif "sdxl" in name_lower or is_genuine:
+                    base_model_hint = "sdxl-1.0"
+                elif "wan" in name_lower:
+                    base_model_hint = "wan-2.1-turbo" if "turbo" in name_lower else "wan-2.1-t2v"
+                elif "ltx" in name_lower:
+                    base_model_hint = "ltx-video-turbo" if "turbo" in name_lower else "ltx-video"
+                elif "z-image" in name_lower or "zimage" in name_lower:
+                    base_model_hint = "z-image"
+                elif "minimax" in name_lower:
+                    base_model_hint = "minimax-video"
+                elif "cogvideo" in name_lower:
+                    base_model_hint = "cogvideox-5b"
+
+            status_label = "Genuine LoRA (Full Weights)" if is_genuine else ("Legacy Mock Stub (<1MB)" if stat.st_size < 1024 * 1024 else "Lightweight LoRA")
+            engine = metrics_data.get("training_engine", "Kohya SDXL sd-scripts (CUDA)" if is_genuine else "PyTorch / Dry-Run")
 
             models.append({
                 "filename": f.name,
                 "filepath": str(f.resolve()),
                 "size_kb": size_kb,
                 "size_mb": size_mb,
+                "is_genuine": is_genuine,
+                "status_label": status_label,
+                "training_engine": engine,
                 "modified_timestamp": stat.st_mtime,
+                "modified_datetime": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(stat.st_mtime)),
                 "base_model_hint": base_model_hint,
                 "has_metrics": has_metrics,
+                "total_steps": metrics_data.get("total_steps"),
+                "epochs": metrics_data.get("epochs"),
+                "final_loss": metrics_data.get("final_loss"),
+                "learning_rate": metrics_data.get("learning_rate"),
                 "is_empty": stat.st_size < 1024
             })
 
@@ -478,31 +498,89 @@ class EvaluationService:
         }
 
     _sdxl_pipe = None
+    _cached_ckpt_path = None
 
     @classmethod
-    def get_real_diffusion_pipe(cls):
+    def get_available_base_checkpoints(cls) -> List[Dict[str, Any]]:
         """
-        Loads the genuine SDXL Diffusion Pipeline on CUDA from local ComfyUI model checkpoint.
-        Caches in memory for instant 3-4s real latent diffusion inference.
+        Scans local ComfyUI checkpoints folder for genuine SDXL and diffusion models.
         """
-        if cls._sdxl_pipe is None:
-            try:
-                import torch
-                from diffusers import StableDiffusionXLPipeline
-                ckpt = "D:/ComfyUI/ComfyUI/models/checkpoints/autismmixSDXL_autismmixPony.safetensors"
-                if os.path.exists(ckpt) and torch.cuda.is_available():
-                    logger.info("Initializing Real SDXL Pipeline on RTX 3090...")
-                    pipe = StableDiffusionXLPipeline.from_single_file(
-                        ckpt,
-                        torch_dtype=torch.float16,
-                        use_safetensors=True
-                    ).to("cuda")
-                    pipe.set_progress_bar_config(disable=True)
-                    cls._sdxl_pipe = pipe
-                    logger.info("Real SDXL Pipeline successfully loaded into GPU memory.")
-            except Exception as e:
-                logger.warning(f"Could not load real SDXL pipeline ({e}).")
-        return cls._sdxl_pipe
+        search_dirs = [
+            Path("D:/ComfyUI/ComfyUI/models/checkpoints"),
+            Path("D:/ComfyUI/models/checkpoints")
+        ]
+        results = []
+        seen = set()
+
+        for d in search_dirs:
+            if d.exists():
+                for f in sorted(d.glob("*.safetensors")):
+                    if f.name in seen:
+                        continue
+                    seen.add(f.name)
+                    size_gb = round(f.stat().st_size / (1024**3), 2)
+                    name_l = f.name.lower()
+                    
+                    is_sdxl = "xl" in name_l or "sdxl" in name_l or size_gb > 6.0
+                    is_rec = "sd_xl_base_1.0" in name_l or "juggernautxl" in name_l
+
+                    category = "SDXL Base" if is_rec else ("Pony / Anime" if "pony" in name_l or "autism" in name_l else "Diffusion Checkpoint")
+
+                    results.append({
+                        "name": f.name,
+                        "path": str(f.resolve()),
+                        "size_gb": size_gb,
+                        "is_sdxl": is_sdxl,
+                        "is_recommended": is_rec,
+                        "category": category
+                    })
+        return results
+
+    @classmethod
+    def get_real_diffusion_pipe(cls, ckpt_path: Optional[str] = None, *args, **kwargs):
+        """
+        Loads the genuine SDXL Diffusion Pipeline on CUDA from local model checkpoint.
+        Defaults to official sd_xl_base_1.0_0.9vae.safetensors.
+        Caches in GPU memory for fast 2-3s real latent diffusion inference.
+        """
+        default_ckpt = "D:/ComfyUI/ComfyUI/models/checkpoints/sd_xl_base_1.0_0.9vae.safetensors"
+        target_ckpt = ckpt_path if (ckpt_path and os.path.exists(ckpt_path)) else default_ckpt
+
+        if not os.path.exists(target_ckpt):
+            # Fallback to any detected SDXL safetensors
+            available = cls.get_available_base_checkpoints()
+            if available:
+                target_ckpt = available[0]["path"]
+
+        # Check if already loaded with matching checkpoint
+        if cls._sdxl_pipe is not None and cls._cached_ckpt_path == target_ckpt:
+            return cls._sdxl_pipe
+
+        import torch
+        if not torch.cuda.is_available() or not os.path.exists(target_ckpt):
+            return None
+
+        try:
+            from diffusers import StableDiffusionXLPipeline
+            # Free previous model from VRAM if switching checkpoints
+            if cls._sdxl_pipe is not None:
+                del cls._sdxl_pipe
+                torch.cuda.empty_cache()
+
+            logger.info(f"Loading Real SDXL Pipeline on CUDA from: {target_ckpt}...")
+            pipe = StableDiffusionXLPipeline.from_single_file(
+                target_ckpt,
+                torch_dtype=torch.float16,
+                use_safetensors=True
+            ).to("cuda")
+            pipe.set_progress_bar_config(disable=True)
+            cls._sdxl_pipe = pipe
+            cls._cached_ckpt_path = target_ckpt
+            logger.info(f"SDXL Pipeline ready on CUDA ({Path(target_ckpt).name}).")
+            return cls._sdxl_pipe
+        except Exception as e:
+            logger.error(f"Failed to load SDXL pipeline from {target_ckpt}: {e}", exc_info=True)
+            return None
 
     @classmethod
     def render_test_sample(
@@ -514,14 +592,16 @@ class EvaluationService:
         seed: int = 42,
         steps: int = 20,
         model_filename: Optional[str] = None,
+        base_checkpoint: Optional[str] = None,
         aspect_ratio: str = "1:1",
         framing_mode: str = "pad"
     ) -> Dict[str, Any]:
         """
         Interactive Cel Generation Test Bench:
-        Executes genuine SDXL Latent Diffusion inference on the RTX 3090, loading
-        the trained LoRA adapter weights directly into the UNet cross-attention layers.
-        Guarantees exact aspect ratio preservation (1:1, 16:9, 9:16, 2:3, 3:2, 4:3) with NO squishing or stretching.
+        - When lora_scale <= 0.001: unloads all LoRAs and generates a 100% pure SDXL base model image.
+        - When lora_scale > 0.001: loads genuine LoRA weights and blends with exact adapter scale.
+        - Rejects legacy stub files (<1MB) with transparent error message instead of failing or faking.
+        - Zero brown noise or synthetic edge distortion.
         """
         import base64
         from io import BytesIO
@@ -536,11 +616,10 @@ class EvaluationService:
 
         meta = cls.get_training_analytics(project_dir)
         trigger = meta.get("trigger_token", "BendyBot")
-        char_name = meta.get("character_name", "character")
 
         t_start = time.time()
 
-        # Aspect ratio to resolution mapping (all multiples of 64)
+        # Aspect ratio to resolution mapping (multiples of 64)
         aspect_map = {
             "1:1": (1024, 1024),
             "16:9": (1344, 768),
@@ -553,131 +632,108 @@ class EvaluationService:
         W, H = aspect_map.get(aspect_ratio, (1024, 1024))
 
         rendered_img = None
-        engine_used = "Synthetic Fallback"
+        engine_used = "SDXL Latent Diffusion"
+        lora_applied = False
+        lora_size_mb = 0.0
+        is_genuine_lora = False
+        active_ckpt_name = "SDXL Base 1.0"
 
         # 1. Attempt Genuine Diffusion Inference via PyTorch CUDA
-        pipe = cls.get_real_diffusion_pipe()
-        lora_applied = False
-        lora_status_note = "Clean Base Model (Zero LoRA Influence)"
-
+        try:
+            pipe = cls.get_real_diffusion_pipe(base_checkpoint) if base_checkpoint else cls.get_real_diffusion_pipe()
+        except TypeError:
+            pipe = cls.get_real_diffusion_pipe()
         if pipe is not None:
+            active_ckpt_name = Path(cls._cached_ckpt_path).name if cls._cached_ckpt_path else "SDXL Base 1.0"
             try:
                 import torch
                 generator = torch.Generator(device="cuda").manual_seed(seed)
 
-                # Reset any previously loaded LoRA weights to guarantee clean baseline
+                # Reset previous LoRA adapters to guarantee clean baseline
                 try:
                     pipe.unload_lora_weights()
                 except Exception:
                     pass
 
-                # If lora_scale is 0, the user specifically requested 100% clean normal base model
+                # If lora_scale <= 0.001, user specifically requested 100% pure base model output
                 if lora_scale <= 0.001 or not model_filename:
                     lora_applied = False
-                    lora_status_note = "Base Model Only (LoRA Scale = 0.00)"
+                    lora_status_note = f"Pure Base Model [{active_ckpt_name}] (0.00 LoRA Weight)"
+                    logger.info("Test Bench: Running 100% pure base model inference.")
                 else:
                     lora_candidate = out_dir / model_filename
                     if not lora_candidate.exists():
                         lora_candidate = Path(model_filename)
 
-                    if lora_candidate.exists():
-                        # Inspect header keys to check architecture compatibility
-                        try:
-                            from safetensors import safe_open
-                            with safe_open(str(lora_candidate), framework="pt", device="cpu") as f_lora:
-                                candidate_keys = list(f_lora.keys())[:30]
+                    if not lora_candidate.exists():
+                        raise FileNotFoundError(f"Selected LoRA file '{model_filename}' not found in {out_dir}.")
 
-                            # Determine model architecture from tensor keys
-                            is_sdxl = any(k.startswith(("lora_unet_", "lora_te", "unet.")) or "lora_unet" in k for k in candidate_keys)
-                            is_flux = not is_sdxl and any(k.startswith(("transformer.", "lora_transformer.")) or "single_transformer_blocks" in k or "double_transformer_blocks" in k for k in candidate_keys)
-                            is_video = not is_sdxl and any("temporal" in k or "wan" in k or "hunyuan" in k or "cosmos" in k for k in candidate_keys)
-                            is_qwen_or_other = not is_sdxl and not is_flux and not is_video and any("qwen" in k.lower() or "zimage" in k.lower() or "visual" in k.lower() for k in candidate_keys)
+                    file_size = lora_candidate.stat().st_size
+                    lora_size_mb = round(file_size / (1024 * 1024), 2)
 
-                            if is_flux or is_video or is_qwen_or_other:
-                                lora_applied = False
-                                arch_label = "FLUX.1 DiT" if is_flux else ("Video Diffusion (Wan/Hunyuan)" if is_video else "Qwen/Z-Image")
-                                lora_status_note = f"Notice: [{lora_candidate.name}] is a {arch_label} LoRA. Native rendering is supported via ComfyUI. Generating base SDXL reference."
-                                logger.info(lora_status_note)
-                            else:
-                                pipe.load_lora_weights(str(lora_candidate.resolve()), adapter_name="active_lora")
-                                try:
-                                    pipe.set_adapters(["active_lora"], adapter_weights=[float(lora_scale)])
-                                except Exception:
-                                    pass
-                                lora_applied = True
-                                lora_status_note = f"LoRA Active [{lora_candidate.name}] (Weight: {lora_scale:.2f})"
-                        except Exception as lora_err:
-                            logger.info(f"LoRA loading note: {lora_err}")
-                            lora_applied = False
-                            lora_status_note = f"Base Model (LoRA note: {lora_err})"
+                    # Guard against old legacy dry-run mock files (<1MB)
+                    if file_size < 1024 * 1024:
+                        raise ValueError(
+                            f"'{lora_candidate.name}' is an old stub file ({lora_size_mb} MB) from earlier tests. "
+                            f"Please select a genuine LoRA model (e.g. 'test_real_kohya_fitted.safetensors', ~96.8 MB) or run a new training session."
+                        )
 
-                # REAL DIFFUSION DENOISING
-                neg = negative_prompt or "photorealistic, 3d render, modern anime, blurry, extra limbs, color"
-                cross_kwargs = {"scale": float(lora_scale)} if lora_applied and lora_scale > 0.001 else None
+                    is_genuine_lora = True
+                    pipe.load_lora_weights(str(lora_candidate.resolve()), adapter_name="active_lora")
+                    try:
+                        pipe.set_adapters(["active_lora"], adapter_weights=[float(lora_scale)])
+                    except Exception:
+                        pass
+                    lora_applied = True
+                    lora_status_note = f"LoRA Active: {lora_candidate.name} ({lora_size_mb} MB, Scale: {lora_scale:.2f})"
+                    logger.info(f"Test Bench: Loaded LoRA {lora_candidate.name} with scale {lora_scale}.")
+
+                # Real SDXL Diffusion Denoising
+                neg = negative_prompt or "photorealistic, 3d render, modern anime, blurry, extra limbs, ugly, bad anatomy"
+                cross_kwargs = {"scale": float(lora_scale)} if (lora_applied and lora_scale > 0.001) else None
 
                 res = pipe(
                     prompt=prompt,
                     negative_prompt=neg,
                     width=W,
                     height=H,
-                    num_inference_steps=min(30, max(8, steps)),
-                    guidance_scale=5.5,
+                    num_inference_steps=min(40, max(8, steps)),
+                    guidance_scale=5.0,
                     cross_attention_kwargs=cross_kwargs,
                     generator=generator
                 )
                 rendered_img = res.images[0]
-                engine_used = "Real SDXL Latent Diffusion (CUDA)"
+                engine_used = f"Real SDXL Latent Diffusion (CUDA: {active_ckpt_name})"
             except Exception as diff_err:
-                logger.warning(f"Diffusion generation error: {diff_err}")
-                rendered_img = None
+                logger.error(f"Diffusion generation error: {diff_err}", exc_info=True)
+                raise RuntimeError(f"SDXL Diffusion Inference failed: {diff_err}")
 
-        # 2. Distortion-Free Fallback if GPU pipeline not yet loaded
+        # 2. Clean Line-Art Preview for Offline / Test Suite Environments (NO BROWN NOISE)
         if rendered_img is None:
-            random.seed(seed)
-            np.random.seed(seed % (2**31 - 1))
+            engine_used = "Offline Test Mode"
+            lora_status_note = "Offline preview (No CUDA pipeline loaded)"
             keyframes_dir = p_dir / "Keyframes_Out"
             valid_exts = {".png", ".jpg", ".jpeg", ".webp"}
-            sample_images = sorted([f for f in keyframes_dir.iterdir() if f.is_file() and f.suffix.lower() in valid_exts])
+            sample_images = sorted([f for f in keyframes_dir.iterdir() if f.is_file() and f.suffix.lower() in valid_exts]) if keyframes_dir.exists() else []
 
             if sample_images:
                 anchor_path = sample_images[seed % len(sample_images)]
                 try:
-                    raw_im = Image.open(anchor_path).convert("L")
-                    # NO SQUEEZING: Fit aspect ratio with pad, crop, or bucket
+                    raw_im = Image.open(anchor_path).convert("RGB")
                     base_img = DatasetService.fit_image_aspect_ratio(
-                        raw_im, target_width=W, target_height=H, mode=framing_mode, bg_color=(240, 240, 240)
+                        raw_im, target_width=W, target_height=H, mode=framing_mode, bg_color=(250, 250, 250)
                     )
                 except Exception:
-                    base_img = Image.new("L", (W, H), 240)
+                    base_img = Image.new("RGB", (W, H), (250, 250, 250))
             else:
-                base_img = Image.new("L", (W, H), 240)
+                base_img = Image.new("RGB", (W, H), (250, 250, 250))
 
-            base_arr = np.array(base_img, dtype=np.float32)
-            grad_x = np.diff(base_arr, axis=1, prepend=base_arr[:, :1])
-            grad_y = np.diff(base_arr, axis=0, prepend=base_arr[:1, :])
-            edges = np.sqrt(grad_x**2 + grad_y**2)
-            edges_norm = (edges / (edges.max() + 1e-5)) * 255.0
-
-            scale_clamped = max(0.1, min(1.5, lora_scale))
-            ink_strength = scale_clamped * 1.2
-            stylized = base_arr - (edges_norm * (ink_strength * 0.45))
-            stylized = np.clip(stylized, 0, 255).astype(np.uint8)
-
-            final_im = Image.fromarray(stylized).convert("RGB")
-            arr_rgb = np.array(final_im, dtype=np.float32)
-            noise = np.random.normal(0, 10 * scale_clamped, (H, W, 3))
-            arr_rgb = np.clip(arr_rgb + noise, 0, 255).astype(np.uint8)
-            rendered_img = Image.fromarray(arr_rgb)
-
-            # Add stamp overlay
-            draw = ImageDraw.Draw(rendered_img)
-            draw.rectangle([(0, H - 36), (W, H)], fill=(15, 23, 42))
-            stamp_text = f"🧪 TEST CEL [{aspect_ratio}] | Scale: {scale_clamped:.2f} | Seed: {seed} | [{trigger}]"
-            draw.text((12, H - 24), stamp_text, fill=(253, 230, 138))
+            rendered_img = base_img
 
         # Save output image
         timestamp_str = time.strftime("%Y%m%d_%H%M%S")
-        out_filename = f"test_{trigger}_{timestamp_str}_s{seed}.png"
+        weight_tag = f"w{int(lora_scale * 100):03d}"
+        out_filename = f"test_{trigger}_{timestamp_str}_{weight_tag}_s{seed}.png"
         out_file_path = test_renders_dir / out_filename
         rendered_img.save(out_file_path, "PNG")
 
@@ -699,8 +755,11 @@ class EvaluationService:
             "steps": steps,
             "aspect_ratio": aspect_ratio,
             "resolution": f"{W}x{H}",
+            "base_checkpoint": active_ckpt_name,
             "inference_engine": engine_used,
             "lora_applied": lora_applied,
+            "lora_size_mb": lora_size_mb,
+            "is_genuine_lora": is_genuine_lora,
             "lora_status": lora_status_note
         }
 

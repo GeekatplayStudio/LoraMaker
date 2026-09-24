@@ -55,3 +55,13 @@ def start_training(req: StartTrainingRequest):
 def get_training_status(project_dir: str = Query(...)):
     """Retrieves live training job status and loss metrics."""
     return TrainingService.get_job_status(project_dir)
+
+@router.get("/manifest")
+def get_dataset_manifest(project_dir: str = Query(..., description="Project directory path")):
+    """Returns dataset preprocessing manifest showing upscaling, aspect ratio, and captions."""
+    from app.services.dataset_service import DatasetService
+    try:
+        return DatasetService.get_dataset_manifest(project_dir)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
