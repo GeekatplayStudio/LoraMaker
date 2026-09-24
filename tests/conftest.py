@@ -52,3 +52,13 @@ def temp_project_dir():
     temp_dir = tempfile.mkdtemp(prefix="retro_test_project_")
     yield temp_dir
     shutil.rmtree(temp_dir, ignore_errors=True)
+
+@pytest.fixture(autouse=True)
+def mock_external_heavy_services(monkeypatch):
+    """Ensure automated tests run cleanly, deterministically, and fast without external model loading."""
+    from app.services.evaluation_service import EvaluationService
+    from app.agents.story_agent import StoryAgent
+    monkeypatch.setattr(EvaluationService, "get_real_diffusion_pipe", classmethod(lambda cls: None))
+    monkeypatch.setattr(StoryAgent, "_get_best_llm_model", classmethod(lambda cls: None))
+
+
