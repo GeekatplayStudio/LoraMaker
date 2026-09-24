@@ -1,0 +1,792 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Geekatplay LoRA Maker - Vladimir Chopine</title>
+  <!-- Google Fonts: Outfit and JetBrains Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+
+  <!-- App Header -->
+  <header class="app-header">
+    <div class="brand-section">
+      <div class="brand-logo">⚡</div>
+      <div>
+        <h1 class="brand-title">GEEKATPLAY LORA MAKER</h1>
+        <div class="brand-subtitle">Universal Studio by Vladimir Chopine • Geekatplay Studio</div>
+      </div>
+    </div>
+
+    <!-- Navigation Tabs -->
+    <nav class="nav-tabs" id="main-navigation">
+      <button class="tab-btn active" data-tab="scrubber" id="tab-btn-scrubber">
+        <span>🎬</span> Timeline Scrubber
+      </button>
+      <button class="tab-btn" data-tab="gallery" id="tab-btn-gallery">
+        <span>🗃️</span> Keyframe Gallery
+      </button>
+      <button class="tab-btn" data-tab="supervisor" id="tab-btn-supervisor">
+        <span>🤖</span> Supervisor Studio
+      </button>
+      <button class="tab-btn" data-tab="training" id="tab-btn-training">
+        <span>⚡</span> LoRA Training
+      </button>
+      <button class="tab-btn" data-tab="evaluation" id="tab-btn-evaluation">
+        <span>🧪</span> Diagnostics & Testing
+      </button>
+    </nav>
+
+    <!-- Project, Hardware and Studio Controls -->
+    <div class="project-controls">
+      <select id="project-selector" class="form-select" style="max-width: 220px; padding: 6px 12px; font-size: 0.82rem;">
+        <option value="">Loading Projects...</option>
+      </select>
+      <button class="btn-primary" id="btn-new-project" style="padding: 6px 12px; font-size: 0.82rem;">
+        + New Project
+      </button>
+      <!-- Dynamic Hardware GPU Badge -->
+      <div class="hw-badge" id="hw-status-badge" title="Click to view detected GPU hardware & adaptive tuning specs">
+        <span class="pulse-dot" style="background: #10b981;"></span>
+        <span id="hw-badge-text">Detecting GPU...</span>
+      </div>
+      <div class="model-badge" id="model-indicator-badge">
+        <span class="pulse-dot"></span>
+        <span id="model-indicator-text">Ollama: Scanning...</span>
+      </div>
+      <button class="btn-ghost" id="btn-about" title="About Geekatplay Studio" style="padding: 6px 10px; font-size: 0.8rem; border: 1px solid var(--border-color); border-radius: var(--radius-sm); cursor: pointer;">
+        ℹ️ About
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Content Areas -->
+  <main class="main-content">
+
+    <!-- TAB 1: TIMELINE SCRUBBER & CEL FRAME CUTTER -->
+    <section class="workspace-panel active" id="tab-scrubber">
+      <div class="scrubber-grid">
+        
+        <!-- Left: Video Viewport & Scrubber Controls -->
+        <div class="video-viewport-panel glass-panel">
+          
+          <!-- Source video controls bar -->
+          <div style="display: flex; gap: 10px; align-items: center;">
+            <input type="text" id="video-path-input" class="form-input" placeholder="Paste local video path or select file..." style="flex: 1;" />
+            <button class="btn-secondary" id="btn-load-video-path">Load Reel</button>
+            <label class="btn-secondary" style="cursor: pointer; display: flex; align-items: center; gap: 6px;">
+              📁 Upload Video
+              <input type="file" id="video-file-input" accept="video/*" style="display: none;" />
+            </label>
+          </div>
+
+          <!-- Video Viewport -->
+          <div class="video-wrapper" id="video-display-container">
+            <video id="main-video" preload="auto" style="display: none;"></video>
+            <div class="video-placeholder" id="video-placeholder">
+              <div class="icon">📽️</div>
+              <h3>No Video Reel Loaded</h3>
+              <p>Upload a video or enter a file path to scrub through frames and cut cel scans.</p>
+            </div>
+          </div>
+
+          <!-- Scrubber Timeline Controls -->
+          <div class="scrubber-controls">
+            <div class="timeline-slider-wrap">
+              <input type="range" id="timeline-slider" class="timeline-slider" min="0" max="100" value="0" />
+            </div>
+
+            <div class="scrubber-actions">
+              <div class="stepping-controls">
+                <button class="btn-icon" id="btn-step-back-10" title="Step -10 frames (Shift + Left Arrow)">-10</button>
+                <button class="btn-icon" id="btn-step-back-1" title="Step -1 frame (Left Arrow)">◀</button>
+                <button class="btn-icon play-btn" id="btn-play-pause" title="Play / Pause (Spacebar)">▶</button>
+                <button class="btn-icon" id="btn-step-fwd-1" title="Step +1 frame (Right Arrow)">▶</button>
+                <button class="btn-icon" id="btn-step-fwd-10" title="Step +10 frames (Shift + Right Arrow)">+10</button>
+              </div>
+
+              <div class="timecode-display">
+                <span class="timecode-chip mono" id="timecode-readout">00:00:00.000</span>
+                <span class="mono" style="color: var(--text-muted); font-size: 0.9rem;" id="frame-counter-readout">Frame 0000 / 0000</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Right: Cel Frame Cutter Action Panel -->
+        <div class="cut-action-panel glass-panel">
+          <h2 class="panel-title">✂ Cel Scan Extraction</h2>
+
+          <div class="form-group">
+            <label class="form-label" for="char-token-input">Character Trigger Token</label>
+            <input type="text" id="char-token-input" class="form-input mono" value="BendyBot" placeholder="e.g. BendyBot, OldManPete" />
+            <small style="color: var(--text-dim); font-size: 0.75rem;">Prefix for standard LoRA datasets & filenames.</small>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="style-token-input">Style Tokens & Aesthetic</label>
+            <input type="text" id="style-token-input" class="form-input" value="vintage 1930s rubber hose cel animation, monochrome ink" />
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="vision-model-select">Ollama Vision Scanner Model</label>
+            <select id="vision-model-select" class="form-select">
+              <option value="qwen2.5vl:7b">qwen2.5vl:7b (Recommended)</option>
+              <option value="qwen3-vl:4b">qwen3-vl:4b</option>
+              <option value="llama3.2-vision:latest">llama3.2-vision:latest</option>
+              <option value="llava:latest">llava:latest</option>
+            </select>
+          </div>
+
+          <label class="form-checkbox">
+            <input type="checkbox" id="auto-caption-check" checked />
+            <span>Auto-generate LoRA caption via Ollama upon cut</span>
+          </label>
+
+          <button class="btn-cut" id="btn-cut-frame">
+            <span>✂ Cut Cel Frame</span>
+            <span class="cut-hotkey-badge">Hotkey: C</span>
+          </button>
+
+          <!-- Hotkey cheatsheet -->
+          <div style="background: rgba(10, 12, 16, 0.5); padding: 14px; border-radius: var(--radius-md); border: 1px solid var(--border-color); font-size: 0.8rem; display: flex; flex-direction: column; gap: 6px;">
+            <div style="font-weight: 600; color: #fde68a;">Keyboard Controls:</div>
+            <div style="display: flex; justify-content: space-between;"><span>Frame Step:</span> <span class="mono">← / →</span></div>
+            <div style="display: flex; justify-content: space-between;"><span>Jump 10 Frames:</span> <span class="mono">Shift + ← / →</span></div>
+            <div style="display: flex; justify-content: space-between;"><span>Play / Pause:</span> <span class="mono">Spacebar</span></div>
+            <div style="display: flex; justify-content: space-between;"><span>Cut Cel Frame:</span> <span class="mono">C key</span></div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- TAB 2: KEYFRAME GALLERY & CAPTIONS -->
+    <section class="workspace-panel" id="tab-gallery">
+      <!-- Gallery Stat Bar -->
+      <div class="gallery-header glass-panel">
+        <div class="stat-group">
+          <div class="stat-item">
+            <span class="stat-label">Total Cel Scans</span>
+            <span class="stat-value highlight" id="stat-total-frames">0</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-label">Captioned (.txt)</span>
+            <span class="stat-value" id="stat-captioned-frames">0</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-label">Pending Captions</span>
+            <span class="stat-value" id="stat-uncaptioned-frames">0</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-label">Dataset Readiness</span>
+            <span class="stat-value" id="stat-completion-pct" style="color: var(--cyan-accent);">0%</span>
+          </div>
+        </div>
+
+        <div class="gallery-actions">
+          <button class="btn-primary" id="btn-batch-caption">
+            ✨ Auto-Caption All Pending (Ollama)
+          </button>
+          <button class="btn-secondary" id="btn-export-kohya">
+            📦 Export for Kohya_ss
+          </button>
+          <button class="btn-secondary" id="btn-export-comfyui">
+            🎨 Export for ComfyUI
+          </button>
+          <button class="btn-secondary" id="btn-refresh-gallery">
+            🔄 Refresh
+          </button>
+        </div>
+      </div>
+
+      <!-- Keyframes Grid -->
+      <div class="keyframes-grid" id="keyframes-grid">
+        <!-- Rendered by gallery.js -->
+      </div>
+    </section>
+
+    <!-- TAB 3: SUPERVISOR AGENT STUDIO -->
+    <section class="workspace-panel" id="tab-supervisor">
+      <div class="supervisor-layout">
+        
+        <!-- Left: Interactive Chat with Supervisor Agent -->
+        <div class="chat-container glass-panel">
+          <div class="chat-history" id="chat-history">
+            <!-- Initial welcome message -->
+            <div class="chat-message supervisor">
+              <div class="msg-avatar">⚡</div>
+              <div class="msg-bubble">
+Welcome to **Geekatplay LoRA Maker** by Vladimir Chopine (Geekatplay Studio)!
+
+I coordinate your creative workflow across all subjects—photoreal portraits, anime/manga, stylized 3D, vintage animation, concept environments, and product designs:
+- **Hardware Advisor**: Auto-detecting GPU tier and calculating optimal batch size & LoRA rank.
+- **Visual Agent**: Recommending unique trigger tokens and auto-captioning keyframe scans via local vision models.
+- **Video Agent**: Ingesting footage, enforcing non-distorted aspect ratio bucketing, and curating training poses.
+- **Story Agent**: Inking structured cinematic prompts and multi-scene storyboard scripts.
+- **Trainer Agent**: Adaptive training with hardware auto-detection for FLUX.1, SDXL, and Video diffusion.
+
+Select a preset or ask me anything to get started!
+              </div>
+            </div>
+          </div>
+
+          <!-- Quick Prompts Chips -->
+          <div class="quick-prompts">
+            <button class="prompt-chip" data-prompt="Check hardware profile and GPU VRAM recommendations">💻 Hardware & GPU Specs</button>
+            <button class="prompt-chip" data-prompt="Audit dataset readiness for LoRA training">🔍 Audit Dataset Readiness</button>
+            <button class="prompt-chip" data-prompt="Generate 3-scene storyboard script with dynamic cinematic cues">📜 Generate Storyboard</button>
+            <button class="prompt-chip" data-prompt="Recommend optimal trigger tokens and prompt descriptors">🎨 Style & Trigger Advice</button>
+          </div>
+
+          <!-- Input bar -->
+          <div class="chat-input-bar">
+            <input type="text" id="chat-input" class="form-input chat-input" placeholder="Consult the Supervisor Agent (e.g., 'Generate storyboard', 'Check models', 'Audit dataset')..." />
+            <button class="btn-primary" id="btn-send-chat">Send</button>
+          </div>
+        </div>
+
+        <!-- Right: Storyboard Script Sidepanel -->
+        <div class="script-sidepanel glass-panel">
+          <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); padding-bottom: 12px;">
+            <h3 style="font-size: 1rem; color: #fde68a;">🎬 Storyboard Script (JSON)</h3>
+            <button class="btn-secondary" id="btn-copy-script" style="padding: 4px 10px; font-size: 0.78rem;">Copy JSON</button>
+          </div>
+          <p style="font-size: 0.8rem; color: var(--text-dim);">
+            Formatted by the Story Agent for direct ingestion into Wan2.1 / LTX-Video motion diffusion engines.
+          </p>
+          <pre class="script-preview-box mono" id="script-json-preview">// Animation script will appear here when generated by the Story Agent.</pre>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- TAB 4: LORA TRAINING PIPELINE -->
+    <section class="workspace-panel" id="tab-training">
+      <div class="training-grid">
+        
+        <!-- Left: Configuration & Model Architecture -->
+        <div class="glass-panel" style="padding: 24px; display: flex; flex-direction: column; gap: 20px;">
+          <h2 class="panel-title">⚡ LoRA Pipeline Configuration</h2>
+
+          <!-- Architecture selector -->
+          <!-- Architecture selector -->
+          <div class="form-group">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+              <label class="form-label" style="margin-bottom: 0;">Target Diffusion Architecture</label>
+              <!-- Category Filter Buttons -->
+              <div class="model-filters" style="display: flex; gap: 6px;">
+                <button type="button" class="prompt-chip active-filter" data-filter="all" style="padding: 4px 10px; font-size: 0.75rem;">All</button>
+                <button type="button" class="prompt-chip" data-filter="image" style="padding: 4px 10px; font-size: 0.75rem;">🖼️ Images</button>
+                <button type="button" class="prompt-chip" data-filter="video" style="padding: 4px 10px; font-size: 0.75rem;">🎞️ Video</button>
+                <button type="button" class="prompt-chip" data-filter="turbo" style="padding: 4px 10px; font-size: 0.75rem; color: #fbbf24;">⚡ Turbo</button>
+              </div>
+            </div>
+
+            <div class="model-selection-cards" style="max-height: 280px; overflow-y: auto; padding-right: 4px;">
+              <!-- Image Models -->
+              <div class="model-card selected" data-model-id="flux-1-dev" data-category="image">
+                <div class="model-card-title"><span>FLUX.1 [dev]</span> <span class="model-card-cat">Image</span></div>
+                <div class="model-card-desc">12B Rectified Flow model. State of the art for detailed vintage ink illustrations.</div>
+              </div>
+              <div class="model-card" data-model-id="flux-1-schnell" data-category="image" data-turbo="true">
+                <div class="model-card-title"><span>FLUX.1 [schnell]</span> <span class="model-card-cat" style="color: #fbbf24;">⚡ Turbo</span></div>
+                <div class="model-card-desc">4-step distilled rectified flow for ultra-fast generation and testing.</div>
+              </div>
+              <div class="model-card" data-model-id="qwen-image" data-category="image">
+                <div class="model-card-title"><span>Qwen Image (DiT)</span> <span class="model-card-cat" style="color: #38bdf8;">Image</span></div>
+                <div class="model-card-desc">Alibaba Qwen multimodal vision transformer with unmatched prompt compliance & character identity.</div>
+              </div>
+              <div class="model-card" data-model-id="z-image" data-category="image">
+                <div class="model-card-title"><span>Z-Image DiT</span> <span class="model-card-cat" style="color: #38bdf8;">Image</span></div>
+                <div class="model-card-desc">High-fidelity stylized cel & rubber-hose diffusion transformer architecture.</div>
+              </div>
+              <div class="model-card" data-model-id="sdxl-1.0" data-category="image">
+                <div class="model-card-title"><span>SDXL 1.0</span> <span class="model-card-cat">Image</span></div>
+                <div class="model-card-desc">Classic base model with high compatibility for rubber-hose & cel animation.</div>
+              </div>
+
+              <!-- Video Models -->
+              <div class="model-card" data-model-id="minimax-video" data-category="video">
+                <div class="model-card-title"><span>MiniMax / Hunyuan</span> <span class="model-card-cat" style="color: #10b981;">Video</span></div>
+                <div class="model-card-desc">13B cinematic video diffusion with dynamic cartoon physics and squash/stretch.</div>
+              </div>
+              <div class="model-card" data-model-id="wan-2.1-t2v" data-category="video">
+                <div class="model-card-title"><span>Wan2.1 (14B Full)</span> <span class="model-card-cat" style="color: #10b981;">Video</span></div>
+                <div class="model-card-desc">Cutting-edge open video model with motion brushes & trajectory controls.</div>
+              </div>
+              <div class="model-card" data-model-id="wan-2.1-turbo" data-category="video" data-turbo="true">
+                <div class="model-card-title"><span>Wan2.1 ⚡ Turbo</span> <span class="model-card-cat" style="color: #fbbf24;">⚡ Turbo</span></div>
+                <div class="model-card-desc">Few-step (4-8 step) distilled Wan2.1 video diffusion for rapid motion iteration.</div>
+              </div>
+              <div class="model-card" data-model-id="ltx-video" data-category="video">
+                <div class="model-card-title"><span>LTX-Video</span> <span class="model-card-cat" style="color: #10b981;">Video</span></div>
+                <div class="model-card-desc">High-speed video generation model for 2-4 second motion clips.</div>
+              </div>
+              <div class="model-card" data-model-id="ltx-video-turbo" data-category="video" data-turbo="true">
+                <div class="model-card-title"><span>LTX-Video ⚡ Turbo</span> <span class="model-card-cat" style="color: #fbbf24;">⚡ Turbo</span></div>
+                <div class="model-card-desc">Real-time 8-step motion diffusion, ultra-low VRAM footprint (<12GB).</div>
+              </div>
+              <div class="model-card" data-model-id="cogvideox-5b" data-category="video">
+                <div class="model-card-title"><span>CogVideoX-5B</span> <span class="model-card-cat" style="color: #10b981;">Video</span></div>
+                <div class="model-card-desc">THUDM temporal diffusion with high frame coherence for animated character cycles.</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Hyperparameters -->
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px;">
+            <div class="form-group">
+              <label class="form-label" for="train-rank-input">Network Rank (Dim)</label>
+              <input type="number" id="train-rank-input" class="form-input mono" value="16" />
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="train-alpha-input">Network Alpha</label>
+              <input type="number" id="train-alpha-input" class="form-input mono" value="16" />
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="train-lr-input">Learning Rate</label>
+              <input type="text" id="train-lr-input" class="form-input mono" value="0.0001" />
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="train-epochs-input">Epochs</label>
+              <input type="number" id="train-epochs-input" class="form-input mono" value="5" />
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="train-repeats-input">Image Repeats</label>
+              <input type="number" id="train-repeats-input" class="form-input mono" value="10" />
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="train-batch-input">Batch Size</label>
+              <input type="number" id="train-batch-input" class="form-input mono" value="1" />
+            </div>
+          </div>
+
+          <!-- Execution Mode Selector -->
+          <div class="form-group">
+            <label class="form-label" for="train-exec-mode">Training Engine & Execution Mode</label>
+            <select id="train-exec-mode" class="form-select" style="border-color: var(--amber-primary);">
+              <option value="real_gpu">🔥 Real GPU PyTorch Training (CUDA RTX 3090 - Authentic Gradients & Weights)</option>
+              <option value="dry_run">⚡ Dry-Run Test (Fast 15s - Validate Configs & Telemetry)</option>
+            </select>
+            <small style="color: var(--text-dim); font-size: 0.76rem;">
+              Real mode performs authentic forward/backward passes on CUDA and saves verified .safetensors weights.
+            </small>
+          <!-- Aspect Ratio & Framing Strategy -->
+          <div class="form-group">
+            <label class="form-label" for="train-framing-mode">📐 Aspect Ratio & Framing Strategy</label>
+            <select id="train-framing-mode" class="form-select">
+              <option value="bucket" selected>🧠 Smart Multi-Aspect Bucketing (Native 16:9, 9:16, 2:3, 3:2, 1:1 - Zero Distortion)</option>
+              <option value="pad">🛡️ Pad / Letterbox (Preserves 100% Cel Content, Fills Edges - No Crop, No Squeeze)</option>
+              <option value="crop">✂️ Center Crop (Scales to Fill & Crops Margins - No Stretch)</option>
+            </select>
+            <small style="color: var(--text-dim); font-size: 0.76rem;">
+              Guarantees frames from any video format (16:9, 9:16, 2:3, 3:2, 1:1) are never squeezed or stretched.
+            </small>
+          </div>
+
+          <!-- Readiness Audit Box -->
+          <div id="audit-results-box" style="background: rgba(10, 12, 16, 0.6); padding: 14px; border-radius: var(--radius-md); border: 1px solid var(--border-color);">
+            <div style="color: var(--text-dim); font-size: 0.85rem;">Click below to audit dataset readiness.</div>
+          </div>
+
+          <div style="display: flex; gap: 10px;">
+            <button class="btn-secondary" id="btn-audit-dataset" style="flex: 1;">
+              🔍 Audit Dataset Readiness
+            </button>
+            <button class="btn-cut" id="btn-start-training" style="flex: 2; padding: 12px;">
+              🚀 Launch LoRA Training Run
+            </button>
+          </div>
+        </div>
+
+        <!-- Right: Live Training Monitor & Loss Logs -->
+        <div class="glass-panel" style="padding: 24px; display: flex; flex-direction: column; gap: 16px;">
+          <h2 class="panel-title">📊 Live Training Telemetry</h2>
+
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <span id="training-status-text" class="mono" style="color: var(--cyan-accent); font-weight: 600;">Status: IDLE</span>
+            <span id="training-loss-text" class="mono" style="color: #fde68a;">Current Loss: 0.000</span>
+          </div>
+
+          <div class="progress-bar-container">
+            <div class="progress-bar-fill" id="training-progress-fill"></div>
+          </div>
+
+          <div class="form-group" style="flex: 1;">
+            <label class="form-label">Training Log Stream (Kohya / Trainer Engine)</label>
+            <div class="log-viewer mono" id="training-log-viewer">
+              <div>› Ready to initialize training run.</div>
+              <div>› Awaiting dataset preparation and configuration dispatch.</div>
+            </div>
+          </div>
+
+          <div style="font-size: 0.75rem; color: var(--text-dim); line-height: 1.4;">
+            Weights are generated in safetensors format and automatically saved in <code>Training/output/</code> for instant use in ComfyUI, WebUI, and Wan2.1.
+          </div>
+          <button class="btn-primary" id="btn-goto-testing" style="padding: 10px; width: 100%;">
+            🧪 Open Model Diagnostics & Test Lab
+          </button>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- TAB 5: LORA EVALUATION, DIAGNOSTICS & TEST BENCH -->
+    <section class="workspace-panel" id="tab-evaluation">
+      <div style="display: flex; flex-direction: column; gap: 20px;">
+
+        <!-- Top Model Selection & Actions Bar -->
+        <div class="glass-panel" style="padding: 18px 24px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 14px;">
+          <div style="display: flex; align-items: center; gap: 14px; flex: 1; min-width: 300px;">
+            <label class="form-label" style="margin: 0; white-space: nowrap;" for="eval-model-select">🎯 Selected Model:</label>
+            <select id="eval-model-select" class="form-select mono" style="flex: 1; max-width: 420px;">
+              <option value="">Scanning Training/output/...</option>
+            </select>
+            <button class="btn-secondary" id="btn-eval-refresh" title="Refresh Models & Metrics">🔄 Refresh</button>
+          </div>
+
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <span id="eval-comfy-status" class="eval-badge">ComfyUI Ready</span>
+            <button class="btn-cut" id="btn-deploy-comfyui" style="padding: 8px 16px; font-size: 0.85rem;">
+              🚀 Deploy to ComfyUI (models/loras)
+            </button>
+          </div>
+        </div>
+
+        <!-- 4 Key Diagnostics Stat Cards Grid -->
+        <div class="eval-grid">
+          <!-- Card 1: Model File & Architecture -->
+          <div class="eval-stat-card">
+            <div class="eval-stat-label">
+              <span>Model Architecture</span>
+              <span class="mono" style="color: var(--amber-primary);">Safetensors</span>
+            </div>
+            <div class="eval-stat-value mono" id="eval-stat-model-name" style="font-size: 1.15rem; word-break: break-all;">
+              BendyBot_qwen-image_lora
+            </div>
+            <div class="eval-stat-sub mono" id="eval-stat-rank-alpha">
+              Rank: 16 | Alpha: 16 (Scale: 1.0)
+            </div>
+          </div>
+
+          <!-- Card 2: Trainable Parameters & Weight Math -->
+          <div class="eval-stat-card cyan">
+            <div class="eval-stat-label">
+              <span>Weights & Parameter Math</span>
+              <span id="eval-stat-health-badge" class="eval-badge badge-optimal">Active Gradients</span>
+            </div>
+            <div class="eval-stat-value mono" id="eval-stat-params">
+              100,352 weights
+            </div>
+            <div class="eval-stat-sub mono" id="eval-stat-delta-norm">
+              ΔW Norm: 0.000056
+            </div>
+          </div>
+
+          <!-- Card 3: Loss Convergence Telemetry -->
+          <div class="eval-stat-card emerald">
+            <div class="eval-stat-label">
+              <span>Loss Convergence</span>
+              <span class="mono" style="color: #34d399;">CONVERGED</span>
+            </div>
+            <div class="eval-stat-value mono" id="eval-stat-loss-reduction" style="color: #34d399;">
+              -68.4%
+            </div>
+            <div class="eval-stat-sub mono" id="eval-stat-loss-curve">
+              0.450 ➔ 0.142 (10 epochs)
+            </div>
+          </div>
+
+          <!-- Card 4: Hardware & Deployment Profile -->
+          <div class="eval-stat-card purple">
+            <div class="eval-stat-label">
+              <span>Compute & Deployment</span>
+              <span class="mono" style="color: #c084fc;">CUDA Active</span>
+            </div>
+            <div class="eval-stat-value" id="eval-stat-hardware" style="font-size: 1.1rem;">
+              RTX 3090 (24GB VRAM)
+            </div>
+            <div class="eval-stat-sub">
+              D:\ComfyUI\ComfyUI\models\loras
+            </div>
+          </div>
+        </div>
+
+        <!-- Two Column Studio: Suggested Prompts (Left) & Interactive Test Bench (Right) -->
+        <div class="eval-two-col">
+
+          <!-- Left: Curated Suggested Prompts Lab -->
+          <div class="glass-panel" style="padding: 22px; display: flex; flex-direction: column; gap: 16px;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <div>
+                <h2 class="panel-title" style="margin-bottom: 2px;">🧪 Curated Suggested Prompts</h2>
+                <div style="font-size: 0.8rem; color: var(--text-dim);">Tailored testing formulas incorporating trigger tokens and aesthetic markers.</div>
+              </div>
+            </div>
+
+            <!-- List of prompt cards -->
+            <div class="prompts-container" id="suggested-prompts-list">
+              <div style="padding: 20px; text-align: center; color: var(--text-dim);">Loading suggested testing prompts...</div>
+            </div>
+          </div>
+
+          <!-- Right: Interactive Test Render Bench -->
+          <div class="glass-panel" style="padding: 22px; display: flex; flex-direction: column; gap: 16px;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <div>
+                <h2 class="panel-title" style="margin-bottom: 2px;">🎨 Interactive LoRA Test Bench</h2>
+                <div style="font-size: 0.8rem; color: var(--text-dim);">Synthesize preview cel frames to test character identity and lineart styling.</div>
+              </div>
+              <button class="btn-secondary" id="btn-download-test-cel" style="display: none; padding: 6px 12px; font-size: 0.8rem;">
+                💾 Download Cel
+              </button>
+            </div>
+
+            <!-- Render Preview Viewport -->
+            <div class="test-bench-viewport" id="test-bench-viewport">
+              <div class="test-bench-placeholder">
+                <div class="icon">🖼️</div>
+                <h3>No Test Cel Rendered Yet</h3>
+                <p style="font-size: 0.82rem;">Select a suggested prompt on the left or type your own below, then click "Render Test Cel Frame".</p>
+              </div>
+            </div>
+
+            <!-- Controls & Prompt Form -->
+            <div style="display: flex; flex-direction: column; gap: 12px;">
+              <div class="form-group">
+                <label class="form-label" for="test-prompt-input">Test Positive Prompt</label>
+                <textarea id="test-prompt-input" class="form-input mono" rows="3" placeholder="Enter prompt with trigger word..."></textarea>
+              </div>
+
+              <div class="form-group">
+                <label class="form-label" for="test-neg-prompt-input">Negative Prompt (Optional)</label>
+                <input type="text" id="test-neg-prompt-input" class="form-input mono" value="photorealistic, 3d render, modern anime, blurry, extra limbs, color" />
+              </div>
+
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px;">
+                <!-- LoRA Scale Slider -->
+                <div class="form-group">
+                  <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <label class="form-label" for="test-lora-scale" style="margin: 0;">LoRA Weight (Scale):</label>
+                    <span class="range-val-badge mono" id="test-lora-scale-val">0.85</span>
+                  </div>
+                  <div class="range-slider-row" style="margin-top: 6px;">
+                    <input type="range" id="test-lora-scale" min="0.0" max="1.5" step="0.05" value="0.85" />
+                  </div>
+                </div>
+
+                <!-- Seed Input with Randomizer -->
+                <div class="form-group">
+                  <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <label class="form-label" for="test-seed-input" style="margin: 0;">Seed:</label>
+                    <button class="btn-icon" id="btn-random-seed" style="padding: 2px 6px; font-size: 0.75rem;" title="Randomize Seed">🎲</button>
+                  </div>
+                  <input type="number" id="test-seed-input" class="form-input mono" value="42" style="margin-top: 6px;" />
+              </div>
+
+              <!-- Aspect Ratio & Framing Selectors -->
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px;">
+                <div class="form-group">
+                  <label class="form-label" for="test-aspect-ratio" style="margin-bottom: 6px;">📐 Aspect Ratio:</label>
+                  <select id="test-aspect-ratio" class="form-select mono">
+                    <option value="1:1" selected>1:1 Square (1024×1024)</option>
+                    <option value="16:9">16:9 Landscape (1344×768)</option>
+                    <option value="9:16">9:16 Vertical Reel (768×1344)</option>
+                    <option value="2:3">2:3 Portrait (832×1216)</option>
+                    <option value="3:2">3:2 Classic Photo (1216×832)</option>
+                    <option value="4:3">4:3 Retro TV (1152×896)</option>
+                    <option value="3:4">3:4 Retro Portrait (896×1152)</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label class="form-label" for="test-framing-mode" style="margin-bottom: 6px;">🛡️ Framing Mode:</label>
+                  <select id="test-framing-mode" class="form-select mono">
+                    <option value="pad" selected>Pad / Letterbox (No Squeeze)</option>
+                    <option value="crop">Center Crop (Fill & Crop)</option>
+                    <option value="bucket">Native Bucketing</option>
+                  </select>
+                </div>
+              </div>
+
+              <button class="btn-cut" id="btn-render-test-cel" style="width: 100%; padding: 12px; margin-top: 6px;">
+                🎨 Render Test Cel Frame
+              </button>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- Bottom: Detailed Tensor Layers Breakdown Accordion -->
+        <details class="glass-panel" style="padding: 18px 24px;">
+          <summary style="cursor: pointer; font-weight: 600; color: #fde68a; display: flex; align-items: center; gap: 8px;">
+            <span>🔬 Detailed LoRA Tensor Layer Breakdown & Frobenius Norms</span>
+            <span style="font-size: 0.75rem; color: var(--text-dim); margin-left: auto;">Click to expand</span>
+          </summary>
+          <div class="tensor-table-wrap">
+            <table class="tensor-table">
+              <thead>
+                <tr>
+                  <th>Tensor Layer Key</th>
+                  <th>Shape</th>
+                  <th>Dtype</th>
+                  <th>Parameters</th>
+                  <th>Frobenius Norm</th>
+                </tr>
+              </thead>
+              <tbody id="eval-tensor-tbody">
+                <tr><td colspan="5" style="text-align: center; color: var(--text-dim);">No tensor data loaded</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </details>
+
+      </div>
+    </section>
+
+  </main>
+
+  <!-- MODAL: START NEW PROJECT -->
+  <div class="modal-overlay" id="new-project-modal">
+    <div class="modal-card glass-panel" style="max-width: 580px;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+        <h2 style="font-size: 1.25rem; color: #fde68a;">🎬 Initialize New Studio Project</h2>
+        <span style="font-size: 0.75rem; color: var(--text-dim);">Geekatplay Studio</span>
+      </div>
+      <p style="font-size: 0.82rem; color: var(--text-muted); line-height: 1.4; margin-bottom: 12px;">
+        Sets up standard project structure with native aspect-ratio bucketing and hardware-adaptive LoRA configurations.
+      </p>
+
+      <!-- 1-Click Creative Preset Chips -->
+      <div class="form-group" style="margin-bottom: 12px;">
+        <label class="form-label" style="display: flex; justify-content: space-between;">
+          <span>Creative Presets (1-Click Fill)</span>
+          <span style="color: var(--amber-primary); font-size: 0.75rem;">Click any genre below</span>
+        </label>
+        <div class="preset-chips-row" id="modal-preset-chips" style="display: flex; flex-wrap: wrap; gap: 6px;">
+          <!-- Dynamically populated or fallback presets -->
+          <button type="button" class="preset-chip active" data-preset="photoreal_portrait">👤 Photoreal</button>
+          <button type="button" class="preset-chip" data-preset="anime_manga">✨ Anime</button>
+          <button type="button" class="preset-chip" data-preset="stylized_3d">🧸 3D Feature</button>
+          <button type="button" class="preset-chip" data-preset="vintage_cartoon">🎞️ Vintage Reel</button>
+          <button type="button" class="preset-chip" data-preset="environment_concept">🪐 Concept Art</button>
+          <button type="button" class="preset-chip" data-preset="product_design">⌚ Product</button>
+        </div>
+      </div>
+
+      <form id="form-new-project" style="display: flex; flex-direction: column; gap: 12px;">
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+          <div class="form-group">
+            <label class="form-label" for="modal-proj-name">Project Folder Name</label>
+            <input type="text" id="modal-proj-name" class="form-input" value="Portrait_Elena" required />
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="modal-char-name">Subject / Character Name</label>
+            <input type="text" id="modal-char-name" class="form-input mono" value="Elena" placeholder="e.g. Elena, CyberBot, AstonMartin" required />
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="modal-trigger-token">Unique LoRA Trigger Word</label>
+          <input type="text" id="modal-trigger-token" class="form-input mono" value="elena_portrait" placeholder="e.g. elena_portrait, cyber_style" required />
+          <div style="font-size: 0.72rem; color: var(--text-dim); margin-top: 3px;">This token will be prepended to all training captions and used during inference.</div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="modal-style-desc">Artistic Aesthetic & Style Description</label>
+          <input type="text" id="modal-style-desc" class="form-input" value="photorealistic human portrait, natural studio lighting, 85mm lens, sharp focus" required />
+        </div>
+
+        <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 8px;">
+          <button type="button" class="btn-secondary" id="btn-cancel-modal">Cancel</button>
+          <button type="submit" class="btn-primary">Create Project</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL: HARDWARE & GPU PROFILE -->
+  <div class="modal-overlay" id="hardware-modal">
+    <div class="modal-card glass-panel" style="max-width: 620px;">
+      <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); padding-bottom: 10px; margin-bottom: 14px;">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span style="font-size: 1.3rem;">⚡</span>
+          <h2 style="font-size: 1.2rem; color: #fde68a;">Hardware Profile & Adaptive Engine</h2>
+        </div>
+        <button type="button" class="btn-ghost" id="btn-close-hw-modal" style="font-size: 1.1rem; line-height: 1;">✕</button>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 12px;" id="hw-modal-body">
+        <div style="display: flex; justify-content: space-between; align-items: center; background: rgba(0,0,0,0.25); padding: 10px 14px; border-radius: var(--radius-md); border: 1px solid var(--border-color);">
+          <div>
+            <div style="font-size: 0.75rem; color: var(--text-dim); text-transform: uppercase;">Detected Graphics Hardware</div>
+            <div style="font-size: 1.1rem; font-weight: 700; color: #f8fafc;" id="hw-modal-gpu-name">Detecting...</div>
+          </div>
+          <div id="hw-modal-tier-badge" style="padding: 4px 10px; border-radius: 9999px; font-size: 0.75rem; font-weight: 700; background: rgba(16, 185, 129, 0.2); color: #10b981; border: 1px solid #10b981;">
+            Ultra Tier
+          </div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+          <div style="background: rgba(0,0,0,0.2); padding: 10px; border-radius: var(--radius-sm); border: 1px solid var(--border-color);">
+            <div style="font-size: 0.72rem; color: var(--text-dim);">Total VRAM</div>
+            <div style="font-size: 1.1rem; font-weight: 600; color: #38bdf8;" id="hw-modal-vram">-- GB</div>
+          </div>
+          <div style="background: rgba(0,0,0,0.2); padding: 10px; border-radius: var(--radius-sm); border: 1px solid var(--border-color);">
+            <div style="font-size: 0.72rem; color: var(--text-dim);">System RAM</div>
+            <div style="font-size: 1.1rem; font-weight: 600; color: #a78bfa;" id="hw-modal-ram">-- GB</div>
+          </div>
+        </div>
+
+        <div style="border-top: 1px solid var(--border-color); padding-top: 10px;">
+          <div style="font-size: 0.78rem; font-weight: 600; color: #fde68a; margin-bottom: 8px;">Auto-Recommended Settings For Your Equipment:</div>
+          <ul style="font-size: 0.82rem; color: var(--text-muted); line-height: 1.6; padding-left: 18px;" id="hw-modal-rec-list">
+            <li>Optimal Batch Size: <strong id="hw-rec-batch">--</strong></li>
+            <li>Precision: <strong id="hw-rec-prec">--</strong></li>
+            <li>Supported Models: <strong id="hw-rec-models">--</strong></li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: ABOUT GEEKATPLAY STUDIO -->
+  <div class="modal-overlay" id="about-modal">
+    <div class="modal-card glass-panel" style="max-width: 540px; text-align: center; padding: 28px 24px;">
+      <div style="font-size: 2.4rem; margin-bottom: 8px;">⚡</div>
+      <h2 style="font-size: 1.4rem; color: #fde68a; margin-bottom: 4px;">Geekatplay LoRA Maker</h2>
+      <div style="font-size: 0.85rem; color: var(--cyan-accent); font-weight: 600; margin-bottom: 14px;">Universal LoRA Studio & Multi-Agent Creative Engine</div>
+      <p style="font-size: 0.85rem; color: var(--text-muted); line-height: 1.5; margin-bottom: 16px;">
+        Designed and created by <strong>Vladimir Chopine</strong> (Geekatplay Studio).<br/>
+        Built for creators, animators, and AI artists to extract assets, build clean datasets without aspect-ratio distortion, and train production-ready LoRA models across FLUX.1, SDXL, and Video diffusion.
+      </p>
+
+      <div style="display: flex; justify-content: center; gap: 10px; margin-bottom: 20px;">
+        <a href="https://github.com/GeekatplayStudio/LoraMaker.git" target="_blank" class="btn-primary" style="text-decoration: none; display: inline-flex; align-items: center; gap: 6px; font-size: 0.82rem;">
+          <span>⭐</span> GitHub Repository
+        </a>
+        <button type="button" class="btn-secondary" id="btn-close-about-modal" style="font-size: 0.82rem;">Close</button>
+      </div>
+
+      <div style="font-size: 0.72rem; color: var(--text-dim); border-top: 1px solid var(--border-color); padding-top: 12px;">
+        Version 2.0.0 • Hardware Auto-Adaptive • MIT / Open Source
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Container -->
+  <div class="toast-container" id="toast-container"></div>
+
+  <!-- Client-side Scripts -->
+  <script src="/static/js/app.js"></script>
+  <script src="/static/js/scrubber.js"></script>
+  <script src="/static/js/gallery.js"></script>
+  <script src="/static/js/supervisor.js"></script>
+  <script src="/static/js/training.js"></script>
+  <script src="/static/js/evaluation.js"></script>
+</body>
+</html>

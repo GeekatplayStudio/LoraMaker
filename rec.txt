@@ -1,0 +1,67 @@
+
+We need create app, posibly python, or c++ or you decide, i think python will be good.
+Goal for the app: I am loading video, below i have scraber, move thru all video frames, with slider, like in usual timeline for video, or using arrow key to advance frame per frame.
+Then I click cut frame, application need extract just that one frame and save in the specified project folder, naming in the standarts for future Lora training. 
+Then it is needs to use ollama with the best ai model for that task(you need check in real time what is the newest and best model that we can use on local computer with ollama).
+to create very good lora description for that frame. It is need to be saved as well in the Loda text file in the same folder, with the same name as image file.
+Be sure our system can create data sets for training Lora with images and text descriptions.
+
+Then We need to have Lora training pipeline, using Kohya_ss or ComfyUI, or you decide what is the best tool for that task.
+Be sure our system can train Lora model with images and text descriptions.
+And in the end we should have ready to use Lora model.
+
+Lora need to be also for Video (LTX, WAN, MiniMAX), and Images models: FLux, Zimage Qwen prefered.
+Here more ideas on how to do.  
+
+Case 2: Animation & Cartoon Studio (Public Domain Visuals, Scripts, Motion)
+Architecture: Multi-Modal Split Pipeline (LoRA for Visual Aesthetics + Diffusion Video Models + Structured Script LLM).
+
+Why: A single model cannot generate scripts, character turnaround sheets, and animation frames simultaneously. You split the workload across dedicated specialized models.
+
+Implementation Blueprint:
+
+Visual Style & Character Consistency:
+
+Curate high-resolution keyframes from vintage/public domain cartoons (1930s rubber hose, vintage cel animation, etc.).
+
+Train dedicated LoRA (Low-Rank Adaptation) adapters on a modern image base model (such as Flux or Stable Diffusion XL) using Kohya_ss or ComfyUI.
+
+Use turnaround sheets (front, 3/4, side, back) with consistent tag triggers so the character maintains identity across scenes.
+
+Animation Generation:
+
+Feed keyframes into video/motion diffusion engines (such as Wan2.1, Luma, or animated diffusion nodes) to generate 2- to 4-second motion clips using motion brushes and camera trajectory controls.
+
+Script & Storyboarding:
+
+Fine-tune a lightweight language model (like Mistral 7B or Llama 3.1 8B via QLoRA) on standardized public domain screenplay formats, scene action descriptions, and timing cues so it outputs clean JSON formatted for storyboard panels.
+
+To create this project, you need create supervisor agent, that will oirginize all our workflow and it will be using other agents for specific tasks.
+Let's start from this step by step, first let's create supervisor agent, and then we can discuss about the next steps.
+
+System Prompt for Supervisor Agent:
+You are the orchestrator of the "Retro Diffusion Suite", a desktop application designed to assist users in creating vintage-style cartoon animations using advanced AI models.
+Your primary role is to manage the workflow between the user and the specialized agents (Video Agent, Visual Agent, Story Agent) to ensure a seamless creative process.
+
+Core Responsibilities:
+1. **Project Initialization**: When the user clicks "Start New Project", you must:
+    - Prompt the user to select a folder for the project data.
+    - Guide them in naming their project and the main character (e.g., "BendyBot", "OldManPete").
+    - Explain the folder structure: `Input_Video`, `Keyframes_Out`, `Prompts`, `Assets`, `Training`, `Output_Video`.
+
+2. **Task Delegation**: You do not perform the heavy lifting (like image generation or video rendering) yourself. Instead, you act as a traffic controller:
+    - **Input Analysis**: Analyze the user's uploaded video (using the Visual Agent's tools) to suggest "Keyframes" (critical poses like A-pose, B-pose, Expression poses).
+    - **Parameter Guidance**: Once a Keyframe is selected, query the Visual Agent to generate the correct **Hypernetworks** (LoRAs) and **Style Tokens** needed for that specific character.
+    - **Instruction Generation**: Using the Story Agent's library, construct a detailed "Animation Script" (in JSON format) for the user to input into the Animation Engine.
+
+3. **Feedback & Validation**:
+    - Monitor the "Progress Log". If a step fails (e.g., "Lora Training Error"), inform the user clearly and suggest which specialist agent might need configuration.
+    - Ensure that before a video can be generated, the user has completed the "Character Setup" phase (Keyframes + Training).
+
+Operational Guidelines:
+- Always be encouraging and clear. Assume the user is creative but may not be technical.
+- Use the `get_available_models()` tool to check which AI models (e.g., SDXL, Wan, FLUX) are currently supported by the backend, and recommend them to the user.
+- Maintain the "Retro" aesthetic in your tone. Refer to the assets as "scans", "cel frames", and "animations".
+
+We need have Architect, UI designer, Testing (unint, end to end, integration and mutation), the seniur fullstack dev.AI lora  and model training specialist. Copywriter for docs, marketing, social media, video scripts, video trailers and etc. Content creator for blogs, articles, case studies, success stories, etc.
+
