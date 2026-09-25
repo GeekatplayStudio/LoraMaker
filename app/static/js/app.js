@@ -222,6 +222,11 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     // About Geekatplay Studio Modal
     initAboutModal();
+
+    // System Storage & Paths Settings Modal
+    if (window.SettingsManager) {
+        window.SettingsManager.init();
+    }
 });
 
 // Initialize Hardware Auto-Detection

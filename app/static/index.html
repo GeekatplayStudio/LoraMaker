@@ -46,6 +46,9 @@
       <select id="project-selector" class="form-select" style="max-width: 220px; padding: 6px 12px; font-size: 0.82rem;">
         <option value="">Loading Projects...</option>
       </select>
+            <button class="btn-secondary" id="btn-open-settings" style="padding: 6px 12px; font-size: 0.82rem; display: flex; align-items: center; gap: 6px;" title="Configure model directories, download paths, and drive storage">
+        <span>⚙️</span> Storage & Paths
+      </button>
       <button class="btn-primary" id="btn-new-project" style="padding: 6px 12px; font-size: 0.82rem;">
         + New Project
       </button>
@@ -913,6 +916,100 @@ Select a preset or ask me anything to get started!
     </div>
   </div>
 
+  <!-- System Settings & Storage Configuration Modal -->
+  <div class="modal-overlay" id="settings-modal">
+    <div class="modal-card glass-panel" style="max-width: 680px; width: 92%; max-height: 90vh; overflow-y: auto;">
+      <div class="modal-header" style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); padding-bottom: 12px; margin-bottom: 16px;">
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <span style="font-size: 1.4rem;">⚙️</span>
+          <div>
+            <h3 style="margin: 0; font-size: 1.1rem; color: #fff;">System Storage & Model Paths</h3>
+            <div style="font-size: 0.75rem; color: var(--text-dim);">Point to your existing model libraries and configure safe download directories</div>
+          </div>
+        </div>
+        <button type="button" id="btn-close-settings" style="background: none; border: none; font-size: 1.4rem; color: var(--text-dim); cursor: pointer;">&times;</button>
+      </div>
+
+      <!-- Drive Storage Protection Notice -->
+      <div style="background: rgba(245, 158, 11, 0.08); border: 1px solid rgba(245, 158, 11, 0.3); border-radius: 8px; padding: 12px; margin-bottom: 16px;">
+        <div style="font-size: 0.82rem; color: #fbbf24; font-weight: 600; margin-bottom: 4px;">🛡️ Drive Overfill Protection</div>
+        <div style="font-size: 0.76rem; color: var(--text-dim); line-height: 1.4;">
+          Diffusion models are massive (20GB+ each). To prevent filling up your primary C: drive, all model downloads, HuggingFace Hub caches (<code>HF_HOME</code>), and PyTorch caches (<code>TORCH_HOME</code>) are directed exclusively into your specified Download Folder.
+        </div>
+      </div>
+
+      <!-- Live Drives Capacity Bar -->
+      <div style="margin-bottom: 16px;">
+        <div style="font-size: 0.78rem; font-weight: 600; color: #fff; margin-bottom: 8px;">Storage Telemetry</div>
+        <div id="drives-container" style="display: flex; flex-wrap: wrap; gap: 10px;"></div>
+      </div>
+
+      <!-- Form Inputs -->
+      <div style="display: flex; flex-direction: column; gap: 14px;">
+        <!-- Base Models Directory -->
+        <div class="form-group">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+            <label class="form-label" for="cfg-models-dir" style="margin-bottom: 0;">Base Models Folder (Checkpoints, UNet, LoRAs)</label>
+            <span id="status-models-dir" style="font-size: 0.75rem;"></span>
+          </div>
+          <div style="display: flex; gap: 8px;">
+            <input type="text" id="cfg-models-dir" class="form-input mono" placeholder="e.g. D:/ComfyUI/ComfyUI/models" style="font-size: 0.82rem;" />
+            <button type="button" class="btn-secondary" id="btn-scan-models" style="padding: 6px 12px; font-size: 0.78rem; white-space: nowrap;">
+              🔍 Scan Models
+            </button>
+          </div>
+          <small style="color: var(--text-dim); font-size: 0.74rem;">Where your SDXL checkpoints, FLUX unets, and video models are stored.</small>
+          <div id="models-scan-results" style="display: none;"></div>
+        </div>
+
+        <!-- Dedicated Download & Cache Folder -->
+        <div class="form-group">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+            <label class="form-label" for="cfg-download-dir" style="margin-bottom: 0;">Dedicated Downloads & HuggingFace Cache Folder</label>
+            <span id="status-download-dir" style="font-size: 0.75rem;"></span>
+          </div>
+          <input type="text" id="cfg-download-dir" class="form-input mono" placeholder="e.g. D:/ComfyUI/ComfyUI/models" style="font-size: 0.82rem;" />
+          <small style="color: var(--text-dim); font-size: 0.74rem;">Any newly downloaded models will be saved here. Never touches C: drive.</small>
+        </div>
+
+        <!-- ComfyUI Root -->
+        <div class="form-group">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+            <label class="form-label" for="cfg-comfyui-root" style="margin-bottom: 0;">ComfyUI Installation Directory</label>
+            <span id="status-comfyui" style="font-size: 0.75rem;"></span>
+          </div>
+          <input type="text" id="cfg-comfyui-root" class="form-input mono" placeholder="e.g. D:/ComfyUI/ComfyUI" style="font-size: 0.82rem;" />
+        </div>
+
+        <!-- Kohya Root -->
+        <div class="form-group">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+            <label class="form-label" for="cfg-kohya-root" style="margin-bottom: 0;">Kohya sd-scripts Directory</label>
+            <span id="status-kohya" style="font-size: 0.75rem;"></span>
+          </div>
+          <input type="text" id="cfg-kohya-root" class="form-input mono" placeholder="e.g. D:/ComfyUI/lora-training/fluxgym/sd-scripts" style="font-size: 0.82rem;" />
+        </div>
+
+        <!-- Ollama Host -->
+        <div class="form-group">
+          <label class="form-label" for="cfg-ollama-host">Local Ollama Vision Host</label>
+          <input type="text" id="cfg-ollama-host" class="form-input mono" placeholder="http://localhost:11434" style="font-size: 0.82rem;" />
+        </div>
+      </div>
+
+      <!-- Modal Footer -->
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 20px; border-top: 1px solid var(--border-color); padding-top: 14px;">
+        <button type="button" class="btn-secondary" id="btn-autodetect-paths" style="font-size: 0.8rem;">
+          ⚡ Auto-Detect Local Paths
+        </button>
+        <div style="display: flex; gap: 10px;">
+          <button type="button" class="btn-secondary" id="btn-cancel-settings" style="font-size: 0.82rem;">Cancel</button>
+          <button type="button" class="btn-primary" id="btn-save-settings" style="font-size: 0.82rem;">💾 Save & Apply Paths</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Toast Container -->
   <div class="toast-container" id="toast-container"></div>
 
@@ -923,5 +1020,6 @@ Select a preset or ask me anything to get started!
   <script src="/static/js/supervisor.js"></script>
   <script src="/static/js/training.js"></script>
   <script src="/static/js/evaluation.js"></script>
+  <script src="/static/js/settings.js"></script>
 </body>
 </html>

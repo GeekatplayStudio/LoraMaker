@@ -78,3 +78,46 @@ def test_project_init_with_custom_trigger_token(tmp_path):
     assert meta["character_name"] == "Elena Vance"
     assert meta["trigger_token"] == "elena_vance"
     assert (p_dir / "project.json").exists()
+
+def test_settings_service_cache_redirection(tmp_path):
+    """Verify SettingsService sets HF_HOME and TORCH_HOME to protect primary drive."""
+    import os
+    from app.services.settings_service import SettingsService
+
+    custom_download_dir = str(tmp_path / "custom_models")
+    res = SettingsService.save_settings({
+        "DOWNLOAD_DIR": custom_download_dir
+    })
+    assert res["success"] is True
+    assert res["DOWNLOAD_DIR"] == custom_download_dir
+
+    # Check env vars were redirected
+    assert os.environ.get("HF_HOME") == str(tmp_path / "custom_models" / "huggingface")
+    assert os.environ.get("HUGGINGFACE_HUB_CACHE") == str(tmp_path / "custom_models" / "huggingface" / "hub")
+    assert os.environ.get("TORCH_HOME") == str(tmp_path / "custom_models" / "torch")
+
+def test_api_settings_endpoints(tmp_path):
+    """Verify GET and POST /api/system/settings and scan endpoints."""
+    # 1. GET settings
+    get_res = client.get("/api/system/settings")
+    assert get_res.status_code == 200
+    data = get_res.json()
+    assert "MODELS_DIR" in data
+    assert "DOWNLOAD_DIR" in data
+    assert "drives" in data
+    assert "paths_status" in data
+
+    # 2. Mock model scan directory
+    mock_models = tmp_path / "mock_models"
+    (mock_models / "checkpoints").mkdir(parents=True)
+    (mock_models / "checkpoints" / "sd_xl_base_1.0.safetensors").write_bytes(b"dummy_weights" * 100)
+    (mock_models / "loras").mkdir(parents=True)
+    (mock_models / "loras" / "test_lora.safetensors").write_bytes(b"dummy_lora" * 100)
+
+    scan_res = client.post("/api/system/settings/scan", json={"models_path": str(mock_models)})
+    assert scan_res.status_code == 200
+    scan_data = scan_res.json()
+    assert scan_data["success"] is True
+    assert scan_data["categories"]["checkpoints"]["count"] == 1
+    assert scan_data["categories"]["loras"]["count"] == 1
+

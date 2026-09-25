@@ -451,7 +451,12 @@ class EvaluationService:
         """
         Scans local ComfyUI checkpoints folder for genuine SDXL and diffusion models.
         """
+        from app.services.settings_service import SettingsService
+        user_cfg = SettingsService.get_user_settings()
+        models_root = Path(user_cfg.get("MODELS_DIR", "D:/ComfyUI/ComfyUI/models"))
         search_dirs = [
+            models_root / "checkpoints",
+            models_root,
             Path("D:/ComfyUI/ComfyUI/models/checkpoints"),
             Path("D:/ComfyUI/models/checkpoints")
         ]

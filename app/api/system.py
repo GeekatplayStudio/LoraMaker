@@ -131,3 +131,35 @@ async def get_studio_info():
         "hardware_tier": HardwareService.get_hardware_profile()["tier_name"],
         "gpu_name": HardwareService.get_hardware_profile()["device_name"]
     }
+
+from pydantic import BaseModel
+from typing import Optional
+from app.services.settings_service import SettingsService
+
+class UpdateSettingsRequest(BaseModel):
+    COMFYUI_ROOT: Optional[str] = None
+    MODELS_DIR: Optional[str] = None
+    DOWNLOAD_DIR: Optional[str] = None
+    KOHYA_ROOT: Optional[str] = None
+    KOHYA_FALLBACK_ROOT: Optional[str] = None
+    OLLAMA_HOST: Optional[str] = None
+
+class ScanModelsRequest(BaseModel):
+    models_dir: Optional[str] = None
+    models_path: Optional[str] = None
+
+@router.get("/settings")
+def get_user_settings():
+    """Retrieve user configured model folders, download paths, and drive storage stats."""
+    return SettingsService.get_user_settings()
+
+@router.post("/settings")
+def save_user_settings(req: UpdateSettingsRequest):
+    """Save user configured paths and redirect downloads/caches to protect primary drive."""
+    return SettingsService.save_user_settings(req.model_dump(exclude_none=True))
+
+@router.post("/settings/scan")
+def scan_models_dir(req: ScanModelsRequest):
+    """Scan specified models directory and return detailed model inventory."""
+    target_dir = req.models_dir or req.models_path
+    return SettingsService.scan_models_directory(target_dir)

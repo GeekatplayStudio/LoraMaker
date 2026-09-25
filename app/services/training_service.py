@@ -131,18 +131,31 @@ class TrainingService:
     def _first_file(cls, candidates) -> Optional[Path]:
         if isinstance(candidates, (str, Path)):
             candidates = [candidates]
+        from app.services.settings_service import SettingsService
+        user_cfg = SettingsService.get_user_settings()
+        models_root = Path(user_cfg.get("MODELS_DIR", "D:/ComfyUI/ComfyUI/models"))
+        download_root = Path(user_cfg.get("DOWNLOAD_DIR", str(models_root)))
+
         for x in candidates:
             p = Path(x)
             if p.is_file() or p.is_dir():
                 return p
-            # Check HuggingFace hub cache
+            if not p.is_absolute():
+                candidate_in_models = models_root / x
+                if candidate_in_models.is_file() or candidate_in_models.is_dir():
+                    return candidate_in_models
+
             if "/" in str(x) and not Path(x).is_absolute():
                 hf_name = "models--" + str(x).replace("/", "--")
-                hf_hub = Path.home() / ".cache" / "huggingface" / "hub" / hf_name / "snapshots"
-                if hf_hub.exists():
-                    for snap in sorted(hf_hub.iterdir(), reverse=True):
-                        if snap.is_dir():
-                            return snap
+                possible_hubs = [
+                    download_root / "huggingface" / "hub" / hf_name / "snapshots",
+                    Path.home() / ".cache" / "huggingface" / "hub" / hf_name / "snapshots"
+                ]
+                for hf_hub in possible_hubs:
+                    if hf_hub.exists():
+                        for snap in sorted(hf_hub.iterdir(), reverse=True):
+                            if snap.is_dir():
+                                return snap
         return None
 
     @classmethod
