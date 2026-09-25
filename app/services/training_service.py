@@ -113,6 +113,7 @@ class TrainingService:
             "category": "image",
             "checkpoints": (
                 "D:/ComfyUI/ComfyUI/models/checkpoints/z-image-dit.safetensors",
+                "Tongyi-MAI/Z-Image",
                 "ZhipuAI/Z-Image-DiT",
             ),
         },
@@ -130,7 +131,19 @@ class TrainingService:
     def _first_file(cls, candidates) -> Optional[Path]:
         if isinstance(candidates, (str, Path)):
             candidates = [candidates]
-        return next((Path(x) for x in candidates if Path(x).is_file()), None)
+        for x in candidates:
+            p = Path(x)
+            if p.is_file() or p.is_dir():
+                return p
+            # Check HuggingFace hub cache
+            if "/" in str(x) and not Path(x).is_absolute():
+                hf_name = "models--" + str(x).replace("/", "--")
+                hf_hub = Path.home() / ".cache" / "huggingface" / "hub" / hf_name / "snapshots"
+                if hf_hub.exists():
+                    for snap in sorted(hf_hub.iterdir(), reverse=True):
+                        if snap.is_dir():
+                            return snap
+        return None
 
     @classmethod
     def _script(cls, filename: str) -> Optional[Path]:
@@ -229,7 +242,7 @@ class TrainingService:
         meta = DatasetService.load_project_meta(project_dir) or {}
         output = p / "Training" / "output"
         output.mkdir(parents=True, exist_ok=True)
-        is_supported = base_model in cls._TRAINERS and cls._first_file(cls._TRAINERS[base_model].get("checkpoints", ())) is not None
+        is_supported = base_model in ["sdxl-1.0", "flux-1-dev"] and cls._first_file(cls._TRAINERS.get(base_model, {}).get("checkpoints", ())) is not None
         manifest = {
             "format": "lora-maker-run-manifest-v1",
             "base_model": base_model,

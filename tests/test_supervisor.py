@@ -9,7 +9,7 @@ def test_supervisor_get_available_models():
     assert "supported_lora_architectures" in models_info
     # The supervisor must expose only locally executable backends, not the
     # aspirational architecture catalogue.
-    assert {model["id"] for model in models_info["supported_lora_architectures"]} <= {"sdxl-1.0", "flux-1-dev", "minimax-video"}
+    assert {model["id"] for model in models_info["supported_lora_architectures"]} <= {"sdxl-1.0", "flux-1-dev", "minimax-video", "qwen-image", "z-image"}
     assert models_info["recommended_video_model"] in {None, "minimax-video"}
 
 def test_supervisor_start_new_project(temp_project_dir):
