@@ -79,7 +79,10 @@
           
           <!-- Source video controls bar -->
           <div style="display: flex; gap: 10px; align-items: center;">
-            <input type="text" id="video-path-input" class="form-input" placeholder="Paste local video path or select file..." style="flex: 1;" />
+            <input type="text" id="video-path-input" class="form-input mono" placeholder="Paste local video path or browse folder..." style="flex: 1;" />
+            <button type="button" class="btn-secondary btn-browse-folder" data-target="video-path-input" title="Browse directories for video files or reels" style="padding: 10px 14px; font-size: 0.85rem; display: flex; align-items: center; gap: 6px; white-space: nowrap;">
+              📁 Browse...
+            </button>
             <button class="btn-secondary" id="btn-load-video-path">Load Reel</button>
             <label class="btn-secondary" style="cursor: pointer; display: flex; align-items: center; gap: 6px;">
               📁 Upload Video
@@ -953,7 +956,10 @@ Select a preset or ask me anything to get started!
             <span id="status-models-dir" style="font-size: 0.75rem;"></span>
           </div>
           <div style="display: flex; gap: 8px;">
-            <input type="text" id="cfg-models-dir" class="form-input mono" placeholder="e.g. D:/ComfyUI/ComfyUI/models" style="font-size: 0.82rem;" />
+            <input type="text" id="cfg-models-dir" class="form-input mono" placeholder="e.g. D:/ComfyUI/ComfyUI/models" style="font-size: 0.82rem; flex: 1;" />
+            <button type="button" class="btn-secondary btn-browse-folder" data-target="cfg-models-dir" style="padding: 6px 12px; font-size: 0.78rem; white-space: nowrap;">
+              📁 Browse...
+            </button>
             <button type="button" class="btn-secondary" id="btn-scan-models" style="padding: 6px 12px; font-size: 0.78rem; white-space: nowrap;">
               🔍 Scan Models
             </button>
@@ -968,7 +974,12 @@ Select a preset or ask me anything to get started!
             <label class="form-label" for="cfg-download-dir" style="margin-bottom: 0;">Dedicated Downloads & HuggingFace Cache Folder</label>
             <span id="status-download-dir" style="font-size: 0.75rem;"></span>
           </div>
-          <input type="text" id="cfg-download-dir" class="form-input mono" placeholder="e.g. D:/ComfyUI/ComfyUI/models" style="font-size: 0.82rem;" />
+          <div style="display: flex; gap: 8px;">
+            <input type="text" id="cfg-download-dir" class="form-input mono" placeholder="e.g. D:/ComfyUI/ComfyUI/models" style="font-size: 0.82rem; flex: 1;" />
+            <button type="button" class="btn-secondary btn-browse-folder" data-target="cfg-download-dir" style="padding: 6px 12px; font-size: 0.78rem; white-space: nowrap;">
+              📁 Browse...
+            </button>
+          </div>
           <small style="color: var(--text-dim); font-size: 0.74rem;">Any newly downloaded models will be saved here. Never touches C: drive.</small>
         </div>
 
@@ -978,7 +989,12 @@ Select a preset or ask me anything to get started!
             <label class="form-label" for="cfg-comfyui-root" style="margin-bottom: 0;">ComfyUI Installation Directory</label>
             <span id="status-comfyui" style="font-size: 0.75rem;"></span>
           </div>
-          <input type="text" id="cfg-comfyui-root" class="form-input mono" placeholder="e.g. D:/ComfyUI/ComfyUI" style="font-size: 0.82rem;" />
+          <div style="display: flex; gap: 8px;">
+            <input type="text" id="cfg-comfyui-root" class="form-input mono" placeholder="e.g. D:/ComfyUI/ComfyUI" style="font-size: 0.82rem; flex: 1;" />
+            <button type="button" class="btn-secondary btn-browse-folder" data-target="cfg-comfyui-root" style="padding: 6px 12px; font-size: 0.78rem; white-space: nowrap;">
+              📁 Browse...
+            </button>
+          </div>
         </div>
 
         <!-- Kohya Root -->
@@ -987,7 +1003,12 @@ Select a preset or ask me anything to get started!
             <label class="form-label" for="cfg-kohya-root" style="margin-bottom: 0;">Kohya sd-scripts Directory</label>
             <span id="status-kohya" style="font-size: 0.75rem;"></span>
           </div>
-          <input type="text" id="cfg-kohya-root" class="form-input mono" placeholder="e.g. D:/ComfyUI/lora-training/fluxgym/sd-scripts" style="font-size: 0.82rem;" />
+          <div style="display: flex; gap: 8px;">
+            <input type="text" id="cfg-kohya-root" class="form-input mono" placeholder="e.g. D:/ComfyUI/lora-training/fluxgym/sd-scripts" style="font-size: 0.82rem; flex: 1;" />
+            <button type="button" class="btn-secondary btn-browse-folder" data-target="cfg-kohya-root" style="padding: 6px 12px; font-size: 0.78rem; white-space: nowrap;">
+              📁 Browse...
+            </button>
+          </div>
         </div>
 
         <!-- Ollama Host -->
@@ -1007,6 +1028,96 @@ Select a preset or ask me anything to get started!
           <button type="button" class="btn-primary" id="btn-save-settings" style="font-size: 0.82rem;">💾 Save & Apply Paths</button>
         </div>
       </div>
+    </div>
+  </div>
+
+  <!-- Interactive Server Directory Browser Modal -->
+  <div class="modal-overlay" id="dir-browser-modal" style="z-index: 11000;">
+    <div class="modal-card glass-panel" style="max-width: 840px; width: 94%; height: 86vh; display: flex; flex-direction: column; padding: 22px;">
+      
+      <!-- Modal Header -->
+      <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); padding-bottom: 12px; margin-bottom: 12px;">
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <span style="font-size: 1.5rem;">📂</span>
+          <div>
+            <h3 style="margin: 0; font-size: 1.15rem; color: #fff;">File System Directory Explorer</h3>
+            <div style="font-size: 0.75rem; color: var(--text-dim);" id="browser-target-label">Navigating storage drives and directories</div>
+          </div>
+        </div>
+        <button type="button" id="btn-close-browser" style="background: none; border: none; font-size: 1.5rem; color: var(--text-dim); cursor: pointer;">&times;</button>
+      </div>
+
+      <!-- Navigation & Path Toolbar -->
+      <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 10px;">
+        <button type="button" class="btn-secondary" id="btn-browser-up" title="Up one level (Parent directory)" style="padding: 6px 12px; font-size: 0.82rem;">
+          ⬆️ Up
+        </button>
+        <button type="button" class="btn-secondary" id="btn-browser-drives" title="Jump to Drives Overview" style="padding: 6px 12px; font-size: 0.82rem;">
+          💽 Drives
+        </button>
+        <button type="button" class="btn-secondary" id="btn-browser-refresh" title="Refresh folder" style="padding: 6px 10px; font-size: 0.82rem;">
+          🔄
+        </button>
+        <input type="text" id="browser-path-input" class="form-input mono" placeholder="Current directory path..." style="flex: 1; font-size: 0.82rem; padding: 6px 10px;" />
+        <button type="button" class="btn-secondary" id="btn-browser-go" style="padding: 6px 12px; font-size: 0.82rem;">
+          Go
+        </button>
+      </div>
+
+      <!-- Breadcrumbs Bar -->
+      <div id="browser-breadcrumbs" style="display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 6px 10px; background: rgba(0,0,0,0.3); border-radius: 6px; margin-bottom: 12px; min-height: 34px;">
+      </div>
+
+      <!-- Browser Content Split Layout -->
+      <div style="display: flex; gap: 14px; flex: 1; min-height: 0; margin-bottom: 12px;">
+        
+        <!-- Left Quick Sidebar: Drives & Common Locations -->
+        <div style="width: 230px; display: flex; flex-direction: column; gap: 10px; border-right: 1px solid var(--border-color); padding-right: 12px; overflow-y: auto;">
+          <div style="font-size: 0.74rem; text-transform: uppercase; font-weight: 700; color: var(--amber-primary); letter-spacing: 0.5px;">
+            Quick Locations
+          </div>
+          <div id="browser-quick-locations" style="display: flex; flex-direction: column; gap: 4px;">
+            <!-- Rendered dynamically -->
+          </div>
+
+          <div style="font-size: 0.74rem; text-transform: uppercase; font-weight: 700; color: var(--amber-primary); letter-spacing: 0.5px; margin-top: 10px;">
+            Connected Drives
+          </div>
+          <div id="browser-drives-list" style="display: flex; flex-direction: column; gap: 4px; overflow-y: auto; max-height: 240px;">
+            <!-- Rendered dynamically -->
+          </div>
+        </div>
+
+        <!-- Right Main: Subdirectories & Search Filter -->
+        <div style="flex: 1; display: flex; flex-direction: column; gap: 10px; min-width: 0;">
+          <div style="display: flex; gap: 8px;">
+            <input type="text" id="browser-filter-input" class="form-input" placeholder="🔍 Type to filter folders in current directory..." style="font-size: 0.82rem; padding: 6px 10px; flex: 1;" />
+          </div>
+
+          <!-- Folders Viewport List -->
+          <div id="browser-items-container" style="flex: 1; overflow-y: auto; border: 1px solid var(--border-color); border-radius: 8px; background: rgba(0,0,0,0.25); padding: 8px;">
+            <!-- Folders rendered here -->
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Footer Bar with Selected Folder & Action Buttons -->
+      <div style="display: flex; justify-content: space-between; align-items: center; border-top: 1px solid var(--border-color); padding-top: 12px;">
+        <div style="flex: 1; margin-right: 14px; overflow: hidden;">
+          <div style="font-size: 0.72rem; color: var(--text-dim); margin-bottom: 2px;">Selected Folder:</div>
+          <div id="browser-selected-preview" class="mono" style="font-size: 0.82rem; color: var(--amber-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 600;">
+            (Click a folder to select)
+          </div>
+        </div>
+        <div style="display: flex; gap: 10px;">
+          <button type="button" class="btn-secondary" id="btn-browser-cancel" style="font-size: 0.82rem;">Cancel</button>
+          <button type="button" class="btn-primary" id="btn-browser-select" style="font-size: 0.85rem; padding: 8px 18px;">
+            ✅ Select This Folder
+          </button>
+        </div>
+      </div>
+
     </div>
   </div>
 

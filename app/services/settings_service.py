@@ -202,3 +202,114 @@ class SettingsService:
             except Exception:
                 continue
         return drives
+
+    @classmethod
+    def browse_filesystem(cls, target_path: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Interactive filesystem browser for Windows and POSIX systems.
+        If target_path is None or empty or 'ROOT' or 'drives', returns available storage drives.
+        Otherwise, lists subdirectories, parent directory, and breadcrumbs with model hints.
+        """
+        import string
+        clean_target = (target_path or "").strip()
+
+        # Check if root drives requested or empty
+        if not clean_target or clean_target.upper() in ("ROOT", "DRIVES", "/", "\\"):
+            drives = []
+            for letter in string.ascii_uppercase:
+                d = f"{letter}:\\"
+                if os.path.exists(d):
+                    try:
+                        u = shutil.disk_usage(d)
+                        drives.append({
+                            "name": f"{letter}: Drive",
+                            "path": d,
+                            "is_drive": True,
+                            "free_gb": round(u.free / (1024 ** 3), 1),
+                            "total_gb": round(u.total / (1024 ** 3), 1),
+                            "percent_free": round((u.free / max(1, u.total)) * 100, 1)
+                        })
+                    except Exception:
+                        drives.append({
+                            "name": f"{letter}: Drive",
+                            "path": d,
+                            "is_drive": True,
+                            "free_gb": 0.0,
+                            "total_gb": 0.0,
+                            "percent_free": 0.0
+                        })
+            return {
+                "success": True,
+                "is_root": True,
+                "current_path": "",
+                "parent_path": None,
+                "breadcrumbs": [],
+                "items": drives,
+                "total_items": len(drives)
+            }
+
+        p = Path(clean_target).resolve()
+        if not p.exists() or not p.is_dir():
+            # If path doesn't exist, try parent or fallback to root drives
+            if p.parent and p.parent.exists() and p.parent.is_dir():
+                p = p.parent
+            else:
+                return cls.browse_filesystem(None)
+
+        # Build breadcrumbs
+        parts = p.parts
+        breadcrumbs = []
+        if parts:
+            curr = Path(parts[0])
+            breadcrumbs.append({"name": parts[0], "path": str(curr)})
+            for part in parts[1:]:
+                curr = curr / part
+                breadcrumbs.append({"name": part, "path": str(curr)})
+
+        # Parent path: if at drive root (p.parent == p), parent is root drives ("")
+        parent_path = str(p.parent) if p.parent != p else ""
+
+        # Scan subdirectories
+        items = []
+        known_model_dirs = {"checkpoints", "unet", "loras", "vae", "clip", "diffusion_models", "models"}
+
+        try:
+            with os.scandir(str(p)) as it:
+                for entry in it:
+                    try:
+                        # Skip system/hidden folders
+                        if entry.name.startswith(("$", ".")) or entry.name in ("System Volume Information", "$RECYCLE.BIN"):
+                            continue
+                        if entry.is_dir(follow_symlinks=False):
+                            is_model_dir = entry.name.lower() in known_model_dirs
+                            items.append({
+                                "name": entry.name,
+                                "path": entry.path,
+                                "is_dir": True,
+                                "is_drive": False,
+                                "is_model_dir": is_model_dir
+                            })
+                    except (PermissionError, OSError):
+                        continue
+        except (PermissionError, OSError) as e:
+            return {
+                "success": False,
+                "error": f"Access denied or error reading directory: {e}",
+                "is_root": False,
+                "current_path": str(p),
+                "parent_path": parent_path,
+                "breadcrumbs": breadcrumbs,
+                "items": []
+            }
+
+        items.sort(key=lambda x: x["name"].lower())
+
+        return {
+            "success": True,
+            "is_root": False,
+            "current_path": str(p),
+            "parent_path": parent_path,
+            "breadcrumbs": breadcrumbs,
+            "items": items,
+            "total_items": len(items)
+        }

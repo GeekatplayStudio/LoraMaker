@@ -1194,4 +1194,68 @@ code, pre, .mono {
   box-shadow: 0 0 8px rgba(245, 158, 11, 0.25);
 }
 
+/* Interactive Directory Browser Modal Styles */
+.browser-folder-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  margin-bottom: 4px;
+}
+
+.browser-folder-item:hover {
+  background: rgba(245, 158, 11, 0.08);
+  border-color: rgba(245, 158, 11, 0.3);
+  transform: translateX(2px);
+}
+
+.browser-folder-item.selected {
+  background: rgba(245, 158, 11, 0.16);
+  border-color: var(--amber-primary);
+  box-shadow: 0 0 8px rgba(245, 158, 11, 0.2);
+}
+
+.browser-breadcrumb-chip {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--text-main);
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 0.76rem;
+  font-family: monospace;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.browser-breadcrumb-chip:hover {
+  background: var(--amber-primary);
+  color: #000;
+  border-color: var(--amber-primary);
+}
+
+.browser-sidebar-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  font-size: 0.78rem;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.browser-sidebar-item:hover {
+  background: rgba(245, 158, 11, 0.1);
+  border-color: rgba(245, 158, 11, 0.3);
+  color: #fde68a;
+}
+
+
 

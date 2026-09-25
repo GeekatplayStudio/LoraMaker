@@ -163,3 +163,16 @@ def scan_models_dir(req: ScanModelsRequest):
     """Scan specified models directory and return detailed model inventory."""
     target_dir = req.models_dir or req.models_path
     return SettingsService.scan_models_directory(target_dir)
+
+class BrowseDirectoryRequest(BaseModel):
+    path: Optional[str] = None
+
+@router.get("/browse")
+def browse_fs_get(path: Optional[str] = None):
+    """Interactive server-side directory navigator: lists drives or subfolders with breadcrumbs."""
+    return SettingsService.browse_filesystem(path)
+
+@router.post("/browse")
+def browse_fs_post(req: BrowseDirectoryRequest):
+    """Interactive server-side directory navigator (POST variant)."""
+    return SettingsService.browse_filesystem(req.path)

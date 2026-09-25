@@ -121,3 +121,40 @@ def test_api_settings_endpoints(tmp_path):
     assert scan_data["categories"]["checkpoints"]["count"] == 1
     assert scan_data["categories"]["loras"]["count"] == 1
 
+def test_api_system_browse_endpoints(tmp_path):
+    """Verify GET and POST /api/system/browse endpoints for interactive directory exploration."""
+    # 1. Root / Drives query
+    root_res = client.get("/api/system/browse")
+    assert root_res.status_code == 200
+    root_data = root_res.json()
+    assert root_data["success"] is True
+    assert root_data["is_root"] is True
+    assert len(root_data["items"]) > 0
+
+    # 2. Browse specific mock directory tree
+    tree_root = tmp_path / "browse_root"
+    sub1 = tree_root / "checkpoints"
+    sub2 = tree_root / "loras"
+    sub3 = tree_root / "random_folder"
+    sub1.mkdir(parents=True)
+    sub2.mkdir(parents=True)
+    sub3.mkdir(parents=True)
+
+    browse_res = client.get(f"/api/system/browse?path={tree_root}")
+    assert browse_res.status_code == 200
+    b_data = browse_res.json()
+    assert b_data["success"] is True
+    assert b_data["is_root"] is False
+    assert len(b_data["breadcrumbs"]) >= 2
+    assert len(b_data["items"]) == 3
+
+    model_subdirs = [i["name"] for i in b_data["items"] if i.get("is_model_dir")]
+    assert "checkpoints" in model_subdirs
+    assert "loras" in model_subdirs
+
+    # 3. POST variant
+    post_res = client.post("/api/system/browse", json={"path": str(tree_root)})
+    assert post_res.status_code == 200
+    assert post_res.json()["total_items"] == 3
+
+
