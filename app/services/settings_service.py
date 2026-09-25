@@ -37,13 +37,35 @@ class SettingsService:
         kohya_fallback = Path(data.get("KOHYA_FALLBACK_ROOT", str(settings.KOHYA_FALLBACK_ROOT)))
         ollama_host = data.get("OLLAMA_HOST", settings.OLLAMA_HOST)
 
-        # Drive free space monitoring
-        drives_info = cls._get_drives_space([models_dir, download_dir, Path("C:/"), Path("D:/")])
+        # Multi-location model directories support
+        raw_extra = data.get("EXTRA_MODEL_PATHS", [])
+        extra_paths = []
+        if isinstance(raw_extra, list):
+            for ep in raw_extra:
+                if ep and isinstance(ep, str) and ep.strip():
+                    p_obj = Path(ep.strip())
+                    p_str = str(p_obj.resolve()) if p_obj.exists() else str(p_obj)
+                    p_primary = str(models_dir.resolve()) if models_dir.exists() else str(models_dir)
+                    if p_str not in extra_paths and p_str.lower() != p_primary.lower():
+                        extra_paths.append(p_str)
+
+        all_model_paths = [str(models_dir.resolve()) if models_dir.exists() else str(models_dir)]
+        for ep in extra_paths:
+            if ep not in all_model_paths:
+                all_model_paths.append(ep)
+
+        # Drive free space monitoring across ALL configured model directories
+        probe_paths = [models_dir, download_dir, Path("C:/"), Path("D:/")]
+        for ep in extra_paths:
+            probe_paths.append(Path(ep))
+        drives_info = cls._get_drives_space(probe_paths)
 
         return {
             "success": True,
             "COMFYUI_ROOT": str(comfy_root.resolve()) if comfy_root.exists() else str(comfy_root),
             "MODELS_DIR": str(models_dir.resolve()) if models_dir.exists() else str(models_dir),
+            "EXTRA_MODEL_PATHS": extra_paths,
+            "ALL_MODEL_PATHS": all_model_paths,
             "DOWNLOAD_DIR": str(download_dir.resolve()) if download_dir.exists() else str(download_dir),
             "KOHYA_ROOT": str(kohya_root.resolve()) if kohya_root.exists() else str(kohya_root),
             "KOHYA_FALLBACK_ROOT": str(kohya_fallback.resolve()) if kohya_fallback.exists() else str(kohya_fallback),
@@ -60,12 +82,63 @@ class SettingsService:
         }
 
     @classmethod
+    def get_all_model_directories(cls) -> List[Path]:
+        """Returns all configured model directory Paths that exist on disk."""
+        current = cls.get_user_settings()
+        roots = []
+        seen = set()
+        candidates = current.get("ALL_MODEL_PATHS", [current["MODELS_DIR"]]) + [current["DOWNLOAD_DIR"]]
+        for c in candidates:
+            if not c:
+                continue
+            p = Path(c)
+            if p.exists() and p.is_dir():
+                resolved = p.resolve()
+                if str(resolved) not in seen:
+                    seen.add(str(resolved))
+                    roots.append(resolved)
+        return roots
+
+    @classmethod
+    def add_model_path(cls, path_to_add: str) -> Dict[str, Any]:
+        """Adds a new model folder location and persists."""
+        p_clean = Path(path_to_add.strip())
+        resolved_str = str(p_clean.resolve()) if p_clean.exists() else str(p_clean)
+        current = cls.get_user_settings()
+        extras = list(current.get("EXTRA_MODEL_PATHS", []))
+        if resolved_str.lower() != current["MODELS_DIR"].lower() and resolved_str not in extras:
+            extras.append(resolved_str)
+        return cls.save_user_settings({"EXTRA_MODEL_PATHS": extras})
+
+    @classmethod
+    def remove_model_path(cls, path_to_remove: str) -> Dict[str, Any]:
+        """Removes a model folder location from EXTRA_MODEL_PATHS and persists."""
+        p_clean = Path(path_to_remove.strip())
+        target = str(p_clean.resolve()) if p_clean.exists() else str(p_clean)
+        current = cls.get_user_settings()
+        extras = [ep for ep in current.get("EXTRA_MODEL_PATHS", []) if ep.lower() != target.lower() and ep.lower() != str(p_clean).lower()]
+        return cls.save_user_settings({"EXTRA_MODEL_PATHS": extras})
+
+    @classmethod
     def save_user_settings(cls, new_settings: Dict[str, Any]) -> Dict[str, Any]:
         """Saves user settings to user_settings.json and updates runtime environment variables."""
         current = cls.get_user_settings()
+        
+        extra_paths = new_settings.get("EXTRA_MODEL_PATHS", current.get("EXTRA_MODEL_PATHS", []))
+        if not isinstance(extra_paths, list):
+            extra_paths = []
+        clean_extra = []
+        for ep in extra_paths:
+            if ep and isinstance(ep, str) and ep.strip():
+                p_c = Path(ep.strip())
+                val = str(p_c.resolve()) if p_c.exists() else str(p_c)
+                if val not in clean_extra:
+                    clean_extra.append(val)
+
         updated = {
             "COMFYUI_ROOT": str(Path(new_settings.get("COMFYUI_ROOT", current["COMFYUI_ROOT"])).resolve()),
             "MODELS_DIR": str(Path(new_settings.get("MODELS_DIR", current["MODELS_DIR"])).resolve()),
+            "EXTRA_MODEL_PATHS": clean_extra,
             "DOWNLOAD_DIR": str(Path(new_settings.get("DOWNLOAD_DIR", current["DOWNLOAD_DIR"])).resolve()),
             "KOHYA_ROOT": str(Path(new_settings.get("KOHYA_ROOT", current["KOHYA_ROOT"])).resolve()),
             "KOHYA_FALLBACK_ROOT": str(Path(new_settings.get("KOHYA_FALLBACK_ROOT", current["KOHYA_FALLBACK_ROOT"])).resolve()),
@@ -107,22 +180,16 @@ class SettingsService:
     @classmethod
     def scan_models_directory(cls, custom_dir: Optional[str] = None) -> Dict[str, Any]:
         """
-        Scans the user-configured models folder and returns an inventory
-        of checkpoints, unets, clip models, VAEs, diffusion models, and LoRAs.
+        Scans model folders across all configured locations or a specific folder,
+        returning an inventory of checkpoints, unets, clip models, VAEs, diffusion models, and LoRAs.
         """
         if custom_dir:
-            base_p = Path(custom_dir)
+            scan_dirs = [Path(custom_dir)]
         else:
-            current = cls.get_user_settings()
-            base_p = Path(current["MODELS_DIR"])
-
-        if not base_p.exists():
-            return {
-                "success": False,
-                "error": f"Models directory '{base_p}' does not exist.",
-                "total_models": 0,
-                "categories": {}
-            }
+            scan_dirs = cls.get_all_model_directories()
+            if not scan_dirs:
+                current = cls.get_user_settings()
+                scan_dirs = [Path(current["MODELS_DIR"])]
 
         categories = {
             "checkpoints": [],
@@ -135,41 +202,74 @@ class SettingsService:
 
         total_bytes = 0
         total_count = 0
+        seen_paths = set()
+        locations_scanned = []
 
-        # Scan subdirectories if standard layout, or flat scan
-        for cat in categories.keys():
-            cat_dir = base_p / cat
-            if cat_dir.is_dir():
-                for f in sorted(cat_dir.glob("*")):
-                    if f.is_file() and f.suffix.lower() in [".safetensors", ".ckpt", ".pt", ".bin"]:
-                        sz = f.stat().st_size
-                        total_bytes += sz
-                        total_count += 1
-                        categories[cat].append({
-                            "name": f.name,
-                            "path": str(f.resolve()),
-                            "size_mb": round(sz / (1024 * 1024), 1),
-                            "size_gb": round(sz / (1024 ** 3), 2)
-                        })
-
-        # Also search for standalone safetensors in root if flat folder
-        for f in sorted(base_p.glob("*.safetensors")):
-            if f.is_file():
-                sz = f.stat().st_size
-                total_bytes += sz
-                total_count += 1
-                categories["checkpoints"].append({
-                    "name": f.name,
-                    "path": str(f.resolve()),
-                    "size_mb": round(sz / (1024 * 1024), 1),
-                    "size_gb": round(sz / (1024 ** 3), 2)
+        for base_p in scan_dirs:
+            if not base_p.exists():
+                locations_scanned.append({
+                    "path": str(base_p),
+                    "exists": False,
+                    "models_count": 0,
+                    "size_gb": 0.0
                 })
+                continue
+
+            loc_bytes = 0
+            loc_count = 0
+
+            # Scan standard subdirectories
+            for cat in categories.keys():
+                cat_dir = base_p / cat
+                if cat_dir.is_dir():
+                    for f in sorted(cat_dir.glob("*")):
+                        resolved_f = str(f.resolve())
+                        if f.is_file() and f.suffix.lower() in [".safetensors", ".ckpt", ".pt", ".bin"] and resolved_f not in seen_paths:
+                            seen_paths.add(resolved_f)
+                            sz = f.stat().st_size
+                            total_bytes += sz
+                            loc_bytes += sz
+                            total_count += 1
+                            loc_count += 1
+                            categories[cat].append({
+                                "name": f.name,
+                                "path": resolved_f,
+                                "size_mb": round(sz / (1024 * 1024), 1),
+                                "size_gb": round(sz / (1024 ** 3), 2),
+                                "location": str(base_p.resolve())
+                            })
+
+            # Also search for standalone safetensors in root if flat folder
+            for f in sorted(base_p.glob("*.safetensors")):
+                resolved_f = str(f.resolve())
+                if f.is_file() and resolved_f not in seen_paths:
+                    seen_paths.add(resolved_f)
+                    sz = f.stat().st_size
+                    total_bytes += sz
+                    loc_bytes += sz
+                    total_count += 1
+                    loc_count += 1
+                    categories["checkpoints"].append({
+                        "name": f.name,
+                        "path": resolved_f,
+                        "size_mb": round(sz / (1024 * 1024), 1),
+                        "size_gb": round(sz / (1024 ** 3), 2),
+                        "location": str(base_p.resolve())
+                    })
+
+            locations_scanned.append({
+                "path": str(base_p.resolve()),
+                "exists": True,
+                "models_count": loc_count,
+                "size_gb": round(loc_bytes / (1024 ** 3), 2)
+            })
 
         return {
             "success": True,
-            "models_dir": str(base_p.resolve()),
+            "models_dir": str(scan_dirs[0].resolve()) if scan_dirs else "",
             "total_models": total_count,
             "total_size_gb": round(total_bytes / (1024 ** 3), 2),
+            "locations_scanned": locations_scanned,
             "categories": {
                 k: {
                     "count": len(v),

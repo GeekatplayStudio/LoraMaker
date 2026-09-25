@@ -11,6 +11,17 @@ from app.core.config import settings
 
 client = TestClient(app)
 
+@pytest.fixture(autouse=True)
+def preserve_user_settings():
+    from app.services.settings_service import SettingsService
+    original_file = SettingsService.SETTINGS_FILE
+    content = original_file.read_text(encoding="utf-8") if original_file.exists() else None
+    yield
+    if content is not None:
+        original_file.write_text(content, encoding="utf-8")
+    elif original_file.exists():
+        original_file.unlink()
+
 def test_hardware_service_profile():
     """Verify that HardwareService correctly probes system resources and returns a valid tier."""
     hw = HardwareService.get_hardware_profile()
@@ -156,5 +167,46 @@ def test_api_system_browse_endpoints(tmp_path):
     post_res = client.post("/api/system/browse", json={"path": str(tree_root)})
     assert post_res.status_code == 200
     assert post_res.json()["total_items"] == 3
+
+def test_multi_location_model_paths(tmp_path):
+    """Verify adding, removing, and scanning multiple model directories across drives."""
+    from app.services.settings_service import SettingsService
+
+    loc1 = tmp_path / "models_drive_d"
+    loc2 = tmp_path / "models_drive_f"
+    (loc1 / "checkpoints").mkdir(parents=True)
+    (loc2 / "loras").mkdir(parents=True)
+    (loc1 / "checkpoints" / "model1.safetensors").write_bytes(b"model1" * 100)
+    (loc2 / "loras" / "lora1.safetensors").write_bytes(b"lora1" * 100)
+
+    # 1. Add loc2 to search paths
+    add_res = client.post("/api/system/settings/add_model_path", json={"path": str(loc2)})
+    assert add_res.status_code == 200
+    data = add_res.json()
+    assert str(loc2.resolve()) in data["EXTRA_MODEL_PATHS"]
+
+    # 2. Verify SettingsService.get_all_model_directories() includes both
+    # Temporarily set MODELS_DIR to loc1
+    SettingsService.save_user_settings({"MODELS_DIR": str(loc1)})
+    all_dirs = [str(p) for p in SettingsService.get_all_model_directories()]
+    assert str(loc1.resolve()) in all_dirs
+    assert str(loc2.resolve()) in all_dirs
+
+    # 3. Multi-location scan should discover models across both folders
+    scan_res = client.post("/api/system/settings/scan", json={})
+    assert scan_res.status_code == 200
+    scan_data = scan_res.json()
+    assert scan_data["success"] is True
+    assert "locations_scanned" in scan_data
+    scanned_paths = [l["path"] for l in scan_data["locations_scanned"]]
+    assert str(loc1.resolve()) in scanned_paths
+    assert str(loc2.resolve()) in scanned_paths
+
+    # 4. Remove loc2 from search paths
+    rem_res = client.post("/api/system/settings/remove_model_path", json={"path": str(loc2)})
+    assert rem_res.status_code == 200
+    rem_data = rem_res.json()
+    assert str(loc2.resolve()) not in rem_data["EXTRA_MODEL_PATHS"]
+
 
 

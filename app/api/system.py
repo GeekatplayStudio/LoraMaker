@@ -133,16 +133,20 @@ async def get_studio_info():
     }
 
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 from app.services.settings_service import SettingsService
 
 class UpdateSettingsRequest(BaseModel):
     COMFYUI_ROOT: Optional[str] = None
     MODELS_DIR: Optional[str] = None
+    EXTRA_MODEL_PATHS: Optional[List[str]] = None
     DOWNLOAD_DIR: Optional[str] = None
     KOHYA_ROOT: Optional[str] = None
     KOHYA_FALLBACK_ROOT: Optional[str] = None
     OLLAMA_HOST: Optional[str] = None
+
+class ModelPathRequest(BaseModel):
+    path: str
 
 class ScanModelsRequest(BaseModel):
     models_dir: Optional[str] = None
@@ -158,9 +162,19 @@ def save_user_settings(req: UpdateSettingsRequest):
     """Save user configured paths and redirect downloads/caches to protect primary drive."""
     return SettingsService.save_user_settings(req.model_dump(exclude_none=True))
 
+@router.post("/settings/add_model_path")
+def add_model_path(req: ModelPathRequest):
+    """Add a new model directory across any connected drive to search paths."""
+    return SettingsService.add_model_path(req.path)
+
+@router.post("/settings/remove_model_path")
+def remove_model_path(req: ModelPathRequest):
+    """Remove a model directory from search paths."""
+    return SettingsService.remove_model_path(req.path)
+
 @router.post("/settings/scan")
 def scan_models_dir(req: ScanModelsRequest):
-    """Scan specified models directory and return detailed model inventory."""
+    """Scan specified models directory or all configured folders and return detailed model inventory."""
     target_dir = req.models_dir or req.models_path
     return SettingsService.scan_models_directory(target_dir)
 

@@ -949,22 +949,31 @@ Select a preset or ask me anything to get started!
 
       <!-- Form Inputs -->
       <div style="display: flex; flex-direction: column; gap: 14px;">
-        <!-- Base Models Directory -->
-        <div class="form-group">
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-            <label class="form-label" for="cfg-models-dir" style="margin-bottom: 0;">Base Models Folder (Checkpoints, UNet, LoRAs)</label>
-            <span id="status-models-dir" style="font-size: 0.75rem;"></span>
+        <!-- Model Directories & Multi-Location Search Paths -->
+        <div class="form-group" style="background: rgba(255, 255, 255, 0.02); border: 1px solid var(--border-color); border-radius: 8px; padding: 12px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; flex-wrap: wrap; gap: 8px;">
+            <div>
+              <label class="form-label" style="margin-bottom: 0; color: #fff; font-weight: 600;">Model Folders & Search Paths (Multi-Drive)</label>
+              <div style="font-size: 0.74rem; color: var(--text-dim);">Add directories from any drive (e.g. D:\, F:\, K:\). All checkpoints, UNets, and LoRAs will be indexed together.</div>
+            </div>
+            <div style="display: flex; gap: 8px;">
+              <button type="button" class="btn-primary" id="btn-add-model-folder" style="padding: 5px 12px; font-size: 0.76rem; display: flex; align-items: center; gap: 6px;">
+                <span>➕</span> Add Model Folder
+              </button>
+              <button type="button" class="btn-secondary" id="btn-scan-models" style="padding: 5px 12px; font-size: 0.76rem; white-space: nowrap;">
+                🔍 Scan All
+              </button>
+            </div>
           </div>
-          <div style="display: flex; gap: 8px;">
-            <input type="text" id="cfg-models-dir" class="form-input mono" placeholder="e.g. D:/ComfyUI/ComfyUI/models" style="font-size: 0.82rem; flex: 1;" />
-            <button type="button" class="btn-secondary btn-browse-folder" data-target="cfg-models-dir" style="padding: 6px 12px; font-size: 0.78rem; white-space: nowrap;">
-              📁 Browse...
-            </button>
-            <button type="button" class="btn-secondary" id="btn-scan-models" style="padding: 6px 12px; font-size: 0.78rem; white-space: nowrap;">
-              🔍 Scan Models
-            </button>
+
+          <!-- Dynamic List of Model Folders -->
+          <div id="model-paths-list" style="display: flex; flex-direction: column; gap: 6px; margin-top: 8px; margin-bottom: 8px;">
+            <!-- Populated dynamically: Primary path + Extra paths -->
           </div>
-          <small style="color: var(--text-dim); font-size: 0.74rem;">Where your SDXL checkpoints, FLUX unets, and video models are stored.</small>
+
+          <!-- Hidden fallback input for form compat -->
+          <input type="hidden" id="cfg-models-dir" />
+
           <div id="models-scan-results" style="display: none;"></div>
         </div>
 

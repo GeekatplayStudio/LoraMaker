@@ -449,17 +449,20 @@ class EvaluationService:
     @classmethod
     def get_available_base_checkpoints(cls) -> List[Dict[str, Any]]:
         """
-        Scans local ComfyUI checkpoints folder for genuine SDXL and diffusion models.
+        Scans all configured model folders across drives for genuine SDXL and diffusion checkpoints.
         """
         from app.services.settings_service import SettingsService
-        user_cfg = SettingsService.get_user_settings()
-        models_root = Path(user_cfg.get("MODELS_DIR", "D:/ComfyUI/ComfyUI/models"))
-        search_dirs = [
-            models_root / "checkpoints",
-            models_root,
+        all_roots = SettingsService.get_all_model_directories()
+        search_dirs = []
+        for r in all_roots:
+            search_dirs.append(r / "checkpoints")
+            search_dirs.append(r)
+        
+        # Also include standard fallback paths
+        search_dirs.extend([
             Path("D:/ComfyUI/ComfyUI/models/checkpoints"),
             Path("D:/ComfyUI/models/checkpoints")
-        ]
+        ])
         results = []
         seen = set()
 
