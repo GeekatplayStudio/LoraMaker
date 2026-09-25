@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 class TrainingService:
     _active_jobs: Dict[str, Dict[str, Any]] = {}
+    _active_procs: Dict[str, Any] = {}
     _SCRIPT_ROOTS = (
         Path("D:/ComfyUI/lora-training/fluxgym/sd-scripts"),
         Path("D:/kohya_ss/sd-scripts"),
@@ -336,6 +337,7 @@ class TrainingService:
         lr: float,
         epochs: int,
         batch: int,
+        framing_mode: str = "bucket",
     ) -> List[str]:
         script_file = backend.get("script")
         if not script_file:
@@ -350,6 +352,10 @@ class TrainingService:
             f"--output_name={output_name}",
             "--caption_extension=.txt",
             "--resolution=1024,1024",
+            "--enable_bucket",
+            "--min_bucket_reso=512",
+            "--max_bucket_reso=2048",
+            "--bucket_reso_steps=64",
             f"--network_dim={rank}",
             f"--network_alpha={alpha}",
             f"--network_module={network_mod}",
@@ -363,6 +369,8 @@ class TrainingService:
             "--max_data_loader_n_workers=0",
             "--gradient_checkpointing",
         ]
+        if framing_mode == "crop":
+            cmd.append("--random_crop")
         if base_model == "flux-1-dev":
             cmd += [
                 f"--clip_l={backend['components']['clip_l']}",
@@ -463,6 +471,7 @@ class TrainingService:
             learning_rate,
             epochs,
             batch_size,
+            framing_mode=framing_mode,
         )
         command_file = p / "Training" / "real_training_command.json"
         command_file.write_text(
@@ -525,11 +534,32 @@ class TrainingService:
                     cwd=cwd_dir,
                     env=env,
                 )
+                cls._active_procs[str(p)] = proc
+                job["pid"] = proc.pid
                 pattern = re.compile(r"(\d+)/(\d+).*?(?:avr_loss|loss)[=:\s]+([0-9.]+)", re.I)
-                for raw in iter(proc.stdout.readline, ""):
-                    line = raw.strip()
-                    if not line:
-                        continue
+
+                def stream_chunks(pipe):
+                    buf = ""
+                    while True:
+                        chunk = pipe.read(64)
+                        if not chunk:
+                            if buf.strip():
+                                yield buf.strip()
+                            break
+                        buf += chunk
+                        while "\r" in buf or "\n" in buf:
+                            idx_r = buf.find("\r")
+                            idx_n = buf.find("\n")
+                            if idx_r != -1 and (idx_n == -1 or idx_r < idx_n):
+                                split_idx = idx_r
+                            else:
+                                split_idx = idx_n
+                            line = buf[:split_idx].strip()
+                            buf = buf[split_idx + 1 :]
+                            if line:
+                                yield line
+
+                for line in stream_chunks(proc.stdout):
                     all_lines.append(line)
                     found = pattern.search(line)
                     if found:
@@ -596,6 +626,8 @@ class TrainingService:
                     )
                 except Exception:
                     pass
+            finally:
+                cls._active_procs.pop(str(p), None)
 
         threading.Thread(target=worker, daemon=True).start()
         return {
@@ -623,3 +655,25 @@ class TrainingService:
                 "log": [],
             },
         )
+
+    @classmethod
+    def stop_training(cls, project_dir: str) -> Dict[str, Any]:
+        p = Path(project_dir).resolve()
+        key = str(p)
+        proc = cls._active_procs.get(key)
+        job = cls._active_jobs.get(key)
+        if proc and proc.poll() is None:
+            try:
+                proc.terminate()
+                proc.wait(timeout=3)
+            except Exception:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+        cls._active_procs.pop(key, None)
+        if job:
+            job.update({"status": "stopped", "progress_percent": 0.0})
+            job["log"].append("Training manually stopped by user request.")
+        return {"status": "stopped", "project_dir": str(p)}
+

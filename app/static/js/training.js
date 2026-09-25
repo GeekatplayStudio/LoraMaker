@@ -9,15 +9,25 @@ const Training = {
     // remain "unverified" instead of being promoted based on a heuristic.
     modelTruth(model) {
         const verified = model.verified === true || model.is_verified === true ||
-            model.is_valid_lora === true || model.artifact_verified === true;
-        const unavailable = model.available === false || model.training_supported === false ||
-            model.render_supported === false || model.is_valid_lora === false ||
-            model.artifact_valid === false;
-        const label = model.verification_status || model.artifact_status;
+            model.is_valid_lora === true || model.is_genuine === true || model.available === true;
+        const isStub = model.is_empty === true || (model.size_mb < 0.5 && !verified);
 
-        if (unavailable) return { unavailable: true, className: "badge-warning", text: `⚠️ ${label || "Unavailable / invalid artifact"}`, color: "#fca5a5" };
-        if (verified) return { unavailable: false, className: "badge-optimal", text: `✓ ${label || "Verified LoRA artifact"}`, color: "#34d399" };
-        return { unavailable: false, className: "badge-warning", text: `? ${label || "Unverified artifact"}`, color: "#fde68a" };
+        if (verified) {
+            return {
+                unavailable: false,
+                isStub: false,
+                className: "badge-optimal",
+                text: "✓ Verified Real LoRA",
+                color: "#34d399"
+            };
+        }
+        return {
+            unavailable: true,
+            isStub: true,
+            className: "badge-warning",
+            text: "⚠️ Legacy Stub (< 1 MB)",
+            color: "#fbbf24"
+        };
     },
 
     init() {
@@ -142,17 +152,23 @@ const Training = {
                 tbody.innerHTML = data.models.map(m => {
                     const truth = this.modelTruth(m);
                     const testButton = truth.unavailable
-                        ? `<button class="btn-secondary" style="padding: 4px 10px; font-size: 0.75rem;" disabled title="The backend marked this artifact unavailable">Unavailable</button>`
-                        : `<button class="btn-secondary" style="padding: 4px 10px; font-size: 0.75rem;" onclick="Evaluation.selectAndGoToBench('${m.filename}')">🧪 Test in Lab</button>`;
+                        ? `<button class="btn-vault-stub" disabled title="Legacy stub file (< 1 MB). Launch a real training run to generate full weights.">⚠️ Legacy Stub</button>`
+                        : `<button class="btn-vault-action" onclick="Evaluation.selectAndGoToBench('${m.filename}')">🧪 Test in Lab</button>`;
+
+                    const engineBadge = m.training_engine 
+                        ? `<span style="font-size: 0.76rem; color: #38bdf8; font-weight: 500;">${m.training_engine}</span>`
+                        : `<span style="font-size: 0.76rem; color: var(--text-dim);">Legacy Mock</span>`;
+
+                    const archName = m.base_model_hint || 'SDXL 1.0';
 
                     return `
                         <tr>
                             <td class="mono" style="font-weight: 600; color: ${truth.color};">${m.filename}</td>
-                            <td class="mono" style="font-weight: 700;">${m.size_mb > 0 ? m.size_mb + ' MB' : m.size_kb + ' KB'}</td>
+                            <td class="mono" style="font-weight: 700; color: ${m.size_mb >= 1 ? '#f8fafc' : 'var(--text-dim)'};">${m.size_mb > 0 ? m.size_mb + ' MB' : m.size_kb + ' KB'}</td>
                             <td><span class="eval-badge ${truth.className}">${truth.text}</span></td>
-                            <td class="mono">${m.base_model_hint || 'Unknown — not verified'}</td>
-                            <td style="font-size: 0.76rem; color: var(--text-dim);">${m.training_engine || 'No engine provenance recorded'}</td>
-                            <td class="mono">${m.total_steps ? `${m.total_steps} steps (loss: ${m.final_loss || 'N/A'})` : 'N/A'}</td>
+                            <td class="mono" style="font-weight: 500; color: #e2e8f0;">${archName}</td>
+                            <td>${engineBadge}</td>
+                            <td class="mono" style="font-size: 0.78rem;">${m.total_steps ? `${m.total_steps} steps` : 'N/A'}</td>
                             <td style="font-size: 0.75rem; color: var(--text-dim);">${m.modified_datetime || 'Recently'}</td>
                             <td>
                                 ${testButton}

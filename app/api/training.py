@@ -1,5 +1,5 @@
-from typing import Optional
-from fastapi import APIRouter, HTTPException, Query
+from typing import Optional, Dict, Any
+from fastapi import APIRouter, HTTPException, Query, Body
 from pydantic import BaseModel
 from app.agents.trainer_agent import TrainerAgent
 from app.services.training_service import TrainingService
@@ -97,6 +97,14 @@ def start_training(req: StartTrainingRequest):
 def get_training_status(project_dir: str = Query(...)):
     """Retrieves live training job status and loss metrics."""
     return TrainingService.get_job_status(project_dir)
+
+@router.post("/stop")
+def stop_training(payload: Dict[str, Any] = Body(...)):
+    """Stops an active training job cleanly."""
+    project_dir = payload.get("project_dir")
+    if not project_dir:
+        raise HTTPException(status_code=400, detail="project_dir is required")
+    return TrainingService.stop_training(project_dir)
 
 @router.get("/manifest")
 def get_dataset_manifest(project_dir: str = Query(..., description="Project directory path")):

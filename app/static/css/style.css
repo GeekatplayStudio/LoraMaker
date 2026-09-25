@@ -20,10 +20,10 @@
   --text-muted: #94a3b8;
   --text-dim: #64748b;
   
-  --radius-sm: 6px;
-  --radius-md: 10px;
-  --radius-lg: 16px;
-  --radius-full: 9999px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 12px;
+  --radius-full: 6px;
   
   --shadow-card: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
   --transition-fast: 0.15s ease;
@@ -162,21 +162,21 @@ code, pre, .mono {
 /* Nav tabs */
 .nav-tabs {
   display: flex;
-  gap: 6px;
-  background: rgba(18, 21, 30, 0.8);
+  gap: 4px;
+  background: rgba(15, 18, 26, 0.85);
   padding: 4px;
-  border-radius: var(--radius-full);
+  border-radius: 8px;
   border: 1px solid var(--border-color);
 }
 
 .tab-btn {
   background: transparent;
-  border: none;
+  border: 1px solid transparent;
   color: var(--text-muted);
-  padding: 8px 18px;
+  padding: 8px 16px;
   font-size: 0.88rem;
   font-weight: 500;
-  border-radius: var(--radius-full);
+  border-radius: 6px;
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -187,12 +187,14 @@ code, pre, .mono {
 .tab-btn:hover {
   color: var(--text-main);
   background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.1);
 }
 
 .tab-btn.active {
   color: #0f172a;
   background: linear-gradient(135deg, #f59e0b, #fbbf24);
   font-weight: 600;
+  border-color: #f59e0b;
   box-shadow: 0 0 16px var(--amber-glow);
 }
 
@@ -958,8 +960,8 @@ code, pre, .mono {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 4px 10px;
-  border-radius: var(--radius-full);
+  padding: 3px 8px;
+  border-radius: 4px;
   font-size: 0.75rem;
   font-weight: 600;
 }
@@ -974,6 +976,44 @@ code, pre, .mono {
   background: rgba(245, 158, 11, 0.15);
   color: #fbbf24;
   border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+/* Vault Table Action Buttons */
+.btn-vault-action {
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.2), rgba(217, 119, 6, 0.3));
+  border: 1px solid var(--amber-primary);
+  color: #fde68a;
+  padding: 5px 12px;
+  border-radius: 5px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: all var(--transition-fast);
+  box-shadow: 0 0 10px rgba(245, 158, 11, 0.15);
+}
+
+.btn-vault-action:hover {
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.4), rgba(217, 119, 6, 0.5));
+  border-color: #fbbf24;
+  color: #fff;
+  transform: translateY(-1px);
+  box-shadow: 0 0 16px rgba(245, 158, 11, 0.35);
+}
+
+.btn-vault-stub {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px dashed rgba(255, 255, 255, 0.15);
+  color: var(--text-dim);
+  padding: 5px 10px;
+  border-radius: 5px;
+  font-size: 0.75rem;
+  cursor: not-allowed;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .eval-two-col {
