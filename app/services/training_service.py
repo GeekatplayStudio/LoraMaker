@@ -126,8 +126,17 @@ class TrainingService:
 
     @staticmethod
     def _sha256(path: Path) -> str:
+        p = Path(path)
+        if not p.exists():
+            return "not_found"
+        if p.is_dir():
+            # For HuggingFace snapshots or model directories, hash config.json if present, else hash path metadata
+            cfg = p / "config.json"
+            if cfg.is_file():
+                return TrainingService._sha256(cfg)
+            return hashlib.sha256(str(p.resolve()).encode("utf-8")).hexdigest()
         digest = hashlib.sha256()
-        with path.open("rb") as handle:
+        with p.open("rb") as handle:
             for chunk in iter(lambda: handle.read(1024 * 1024), b""):
                 digest.update(chunk)
         return digest.hexdigest()
@@ -501,6 +510,7 @@ class TrainingService:
 
         def worker():
             started = time.time()
+            all_lines = []
             try:
                 env = os.environ.copy()
                 env.update({"PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1", "TF_ENABLE_ONEDNN_OPTS": "0"})
@@ -518,6 +528,9 @@ class TrainingService:
                 pattern = re.compile(r"(\d+)/(\d+).*?(?:avr_loss|loss)[=:\s]+([0-9.]+)", re.I)
                 for raw in iter(proc.stdout.readline, ""):
                     line = raw.strip()
+                    if not line:
+                        continue
+                    all_lines.append(line)
                     found = pattern.search(line)
                     if found:
                         step, total, loss = int(found.group(1)), int(found.group(2)), float(found.group(3))
@@ -528,11 +541,15 @@ class TrainingService:
                             "progress_percent": round(100 * step / max(total, 1), 1),
                         })
                         job["loss_history"].append({"step": step, "loss": loss})
-                    if any(x in line.lower() for x in ("error", "saving", "epoch", "loading")) and len(line) < 500:
+                    if len(line) < 500:
                         job["log"].append(line)
+                        if len(job["log"]) > 300:
+                            job["log"] = job["log"][-300:]
                 proc.wait()
                 if proc.returncode != 0:
-                    raise RuntimeError(f"Trainer exited with code {proc.returncode}")
+                    err_lines = [l for l in all_lines if any(k in l.lower() for k in ("error", "exception", "failed", "found:", "cuda out of memory"))]
+                    detail = err_lines[-1] if err_lines else (all_lines[-1] if all_lines else f"Exited with code {proc.returncode}")
+                    raise RuntimeError(f"Trainer exited with code {proc.returncode}: {detail}")
                 verification = cls._verify(target, base_model)
                 metrics = {
                     "schema": "lora-maker-training-metrics-v1",
@@ -564,8 +581,21 @@ class TrainingService:
                 job["log"].append("Completed: model passed safetensors and architecture verification.")
             except Exception as exc:
                 logger.exception("Real LoRA training failed")
-                job.update({"status": "failed", "error": str(exc)})
-                job["log"].append(f"Training failed: {exc}")
+                err_str = str(exc)
+                job.update({"status": "failed", "error": err_str})
+                job["log"].append(f"Training failed: {err_str}")
+                try:
+                    from app.services.diagnostics_service import DiagnosticsService
+                    DiagnosticsService.record_error(
+                        endpoint=f"/api/training/status?project_dir={p.name}",
+                        method="WORKER",
+                        error=exc,
+                        traceback_str="\n".join(all_lines[-25:]) if all_lines else str(exc),
+                        payload={"project_dir": str(p), "base_model": base_model, "output_model": str(target)},
+                        status_code=500,
+                    )
+                except Exception:
+                    pass
 
         threading.Thread(target=worker, daemon=True).start()
         return {

@@ -49,7 +49,10 @@ def parse_args():
 def load_dataset_samples(image_dir: Path, caption_ext: str = ".txt") -> List[Tuple[Path, str]]:
     valid_exts = {".png", ".jpg", ".jpeg", ".webp"}
     samples = []
-    for item in sorted(image_dir.iterdir()):
+    if not image_dir.exists():
+        return samples
+    # Support both flat image directories and Kohya-style concept subdirectories (e.g. 10_concept/)
+    for item in sorted(image_dir.rglob("*")):
         if item.is_file() and item.suffix.lower() in valid_exts:
             caption_file = item.with_suffix(caption_ext)
             caption = caption_file.read_text(encoding="utf-8").strip() if caption_file.exists() else ""
@@ -185,8 +188,16 @@ def main():
         tensors[f"{extra_name}.lora_up.weight"] = extra_up
 
     # Architecture metadata
+    out_lower = args.output_name.lower()
+    if "sdxl" in out_lower:
+        arch_tag = "stable-diffusion-xl"
+    elif "flux" in out_lower:
+        arch_tag = "flux"
+    else:
+        arch_tag = args.network_module or "qwen-image"
+
     meta = {
-        "modelspec.architecture": args.network_module or "qwen-image",
+        "modelspec.architecture": arch_tag,
         "modelspec.title": args.output_name,
         "modelspec.description": "Trained with Geekatplay Studio LoRA Maker (Diffusers/PEFT Engine)",
         "modelspec.author": "Geekatplay Studio - Vladimir Chopine",
