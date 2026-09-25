@@ -18,6 +18,11 @@ class StartTrainingRequest(BaseModel):
     execution_mode: str = "real_gpu"
     framing_mode: str = "bucket"
 
+@router.get("/capabilities")
+def get_training_capabilities():
+    """Return only locally verified trainer/model combinations."""
+    return TrainingService.get_training_capabilities()
+
 @router.get("/audit")
 def audit_dataset(project_dir: str = Query(...)):
     """Audits dataset readiness for LoRA training."""
@@ -25,6 +30,20 @@ def audit_dataset(project_dir: str = Query(...)):
         return TrainerAgent.audit_dataset_readiness(project_dir)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+@router.get("/auto_tune")
+def get_auto_tune(
+    project_dir: str = Query(...),
+    base_model: str = Query("sdxl-1.0")
+):
+    """Calculates hardware-optimized training hyperparameters adapted to GPU VRAM and dataset size."""
+    from app.services.hardware_service import HardwareService
+    from app.services.dataset_service import DatasetService
+    ds = DatasetService.get_project_dataset(project_dir)
+    return HardwareService.get_auto_tuned_params(
+        base_model=base_model,
+        dataset_frame_count=max(2, ds.get("total_count", 20))
+    )
 
 @router.get("/profile")
 def get_training_profile(base_model_id: str = Query("flux-1-dev")):

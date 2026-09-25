@@ -338,6 +338,9 @@ Select a preset or ask me anything to get started!
             </div>
           </div>
 
+                    <!-- Auto-Tune Notification Badge -->
+          <div id="auto-tune-badge" style="display: none; padding: 8px 14px; background: rgba(56, 189, 248, 0.12); border: 1px solid rgba(56, 189, 248, 0.4); border-radius: 8px; color: #38bdf8; font-size: 0.82rem; margin-bottom: 14px;"></div>
+
           <!-- Hyperparameters -->
           <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px;">
             <div class="form-group">
@@ -370,11 +373,11 @@ Select a preset or ask me anything to get started!
           <div class="form-group">
             <label class="form-label" for="train-exec-mode">Training Engine & Execution Mode</label>
             <select id="train-exec-mode" class="form-select" style="border-color: var(--amber-primary);">
-              <option value="real_gpu">🔥 Real GPU PyTorch Training (CUDA RTX 3090 - Authentic Gradients & Weights)</option>
-              <option value="dry_run">⚡ Dry-Run Test (Fast 15s - Validate Configs & Telemetry)</option>
+              <option value="real_gpu">🔥 Real Kohya GPU Training (verified adapter output)</option>
+              <option value="validate_only">⚡ Validate prerequisites only (creates no weights)</option>
             </select>
             <small style="color: var(--text-dim); font-size: 0.76rem;">
-              Real mode performs authentic forward/backward passes on CUDA and saves verified .safetensors weights.
+              Real mode launches only a matching installed Kohya trainer. Validation mode never creates model weights.
             </small>
           <!-- Aspect Ratio & Framing Strategy -->
           <div class="form-group">

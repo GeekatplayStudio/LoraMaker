@@ -16,6 +16,22 @@ class AppSettings(BaseModel):
     # Base workspace directory (dynamically resolved, no personal paths)
     BASE_DIR: Path = Path(__file__).resolve().parent.parent.parent
     DEFAULT_PROJECTS_DIR: Path = BASE_DIR / "projects"
+
+    # Local runtime roots.  These defaults retain compatibility with the
+    # original Windows installation, while allowing every path to be changed
+    # for another drive, operating system, or container.
+    #
+    # COMFYUI_ROOT is the directory that contains ``models`` (for example
+    # ``D:/ComfyUI/ComfyUI``). KOHYA_ROOT is either a kohya_ss checkout or its
+    # sd-scripts directory; RuntimeService resolves both layouts safely.
+    COMFYUI_ROOT: Path = Path(os.getenv("COMFYUI_ROOT", "D:/ComfyUI/ComfyUI"))
+    KOHYA_ROOT: Path = Path(os.getenv("KOHYA_ROOT", "D:/kohya_ss/sd-scripts"))
+
+    # Kept separate from the model root because some installations put a
+    # sd-scripts checkout alongside ComfyUI rather than inside kohya_ss.
+    KOHYA_FALLBACK_ROOT: Path = Path(
+        os.getenv("KOHYA_FALLBACK_ROOT", "D:/ComfyUI/lora-training/fluxgym/sd-scripts")
+    )
     
     # Required Standard Folder Structure (as specified in rec.txt)
     STANDARD_FOLDERS: List[str] = [

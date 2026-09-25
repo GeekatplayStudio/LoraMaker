@@ -33,7 +33,8 @@ def test_list_trained_models(active_project):
     models = EvaluationService.list_trained_models(active_project)
     assert len(models) == 1
     assert models[0]["filename"] == "BendyBot_qwen-image_lora.safetensors"
-    assert models[0]["base_model_hint"] == "qwen-image"
+    assert models[0]["verified"] is False
+    assert models[0]["is_valid_lora"] is False
 
 def test_generate_suggested_prompts(active_project):
     res = EvaluationService.generate_suggested_prompts(active_project)
@@ -47,24 +48,12 @@ def test_generate_suggested_prompts(active_project):
 
 def test_get_training_analytics(active_project):
     res = EvaluationService.get_training_analytics(active_project)
-    assert res["success"] is True
-    assert res["character_name"] == "BendyBot"
-    assert "initial_loss" in res
-    assert "final_loss" in res
-    assert "loss_history" in res
-    assert len(res["loss_history"]) > 0
+    assert res["success"] is False
+    assert res["metrics_verified"] is False
 
-def test_render_test_sample(active_project):
-    res = EvaluationService.render_test_sample(
-        project_dir=active_project,
-        prompt="BendyBot whistling on steamboat",
-        lora_scale=0.85,
-        seed=100
-    )
-    assert res["success"] is True
-    assert res["filename"].startswith("test_BendyBot_")
-    assert res["image_base64"].startswith("data:image/png;base64,")
-    assert Path(res["filepath"]).exists()
+def test_render_test_sample_refuses_unverified_artifact(active_project):
+    with pytest.raises(ValueError, match="Select a verified"):
+        EvaluationService.render_test_sample(project_dir=active_project, prompt="BendyBot", lora_scale=0.85, seed=100)
 
 def test_api_evaluation_endpoints(active_project):
     # 1. Models list
@@ -75,15 +64,13 @@ def test_api_evaluation_endpoints(active_project):
 
     # 2. Inspect
     res = client.get(f"/api/evaluation/inspect?project_dir={active_project}&model_filename=BendyBot_qwen-image_lora.safetensors")
-    assert res.status_code == 200
-    data = res.json()
-    assert data["success"] is True
+    assert res.status_code == 400
 
     # 3. Analytics
     res = client.get(f"/api/evaluation/analytics?project_dir={active_project}")
     assert res.status_code == 200
     data = res.json()
-    assert data["success"] is True
+    assert data["success"] is False
 
     # 4. Prompts
     res = client.get(f"/api/evaluation/prompts?project_dir={active_project}")
@@ -91,7 +78,7 @@ def test_api_evaluation_endpoints(active_project):
     data = res.json()
     assert len(data["prompts"]) == 6
 
-    # 5. Test render with explicit aspect ratio
+    # 5. Unverified artifacts cannot be rendered, even with an explicit aspect ratio.
     res = client.post("/api/evaluation/test_render", json={
         "project_dir": active_project,
         "prompt": "BendyBot testing endpoint",
@@ -100,11 +87,7 @@ def test_api_evaluation_endpoints(active_project):
         "aspect_ratio": "16:9",
         "framing_mode": "pad"
     })
-    assert res.status_code == 200
-    data = res.json()
-    assert data["success"] is True
-    assert "data:image/png;base64," in data["image_base64"]
-    assert "1344x768" in data["resolution"]
+    assert res.status_code == 500
 
 def test_aspect_ratio_preservation_and_fitting():
     from PIL import Image

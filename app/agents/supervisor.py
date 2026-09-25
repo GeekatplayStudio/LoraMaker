@@ -60,6 +60,9 @@ class SupervisorAgent:
         best_vision = VisionService.get_best_vision_model()
         from app.services.hardware_service import HardwareService
         hw = HardwareService.get_hardware_profile()
+        capabilities = TrainingService.get_training_capabilities()
+        available_ids = {item["id"] for item in capabilities["architectures"] if item["available"]}
+        available_models = [item for item in settings.SUPPORTED_LORA_ARCHITECTURES if item["id"] in available_ids]
         
         return {
             "studio": "Geekatplay Studio",
@@ -68,9 +71,10 @@ class SupervisorAgent:
             "hardware": hw,
             "best_vision_model": best_vision,
             "installed_ollama_models": local_ollama,
-            "supported_lora_architectures": settings.SUPPORTED_LORA_ARCHITECTURES,
-            "recommended_image_model": "flux-1-dev" if hw["total_vram_gb"] >= 20.0 else "sdxl-1.0",
-            "recommended_video_model": "wan-2.1-t2v" if hw["total_vram_gb"] >= 16.0 else "ltx-video-turbo"
+            "supported_lora_architectures": available_models,
+            "training_capabilities": capabilities,
+            "recommended_image_model": "flux-1-dev" if "flux-1-dev" in available_ids else ("sdxl-1.0" if "sdxl-1.0" in available_ids else None),
+            "recommended_video_model": None
         }
 
     @classmethod

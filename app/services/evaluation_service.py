@@ -2,8 +2,8 @@ import os
 import json
 import time
 import math
-import random
 import logging
+import hashlib
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 import shutil
@@ -18,13 +18,65 @@ class EvaluationService:
     deployment to local ComfyUI installations.
     """
 
+    @staticmethod
+    def _sha256(path: Path) -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+
     @classmethod
     def get_output_dir(cls, project_dir: str) -> Path:
         """Returns the Training/output directory for a project."""
         p_dir = Path(project_dir)
         out_dir = p_dir / "Training" / "output"
+
         out_dir.mkdir(parents=True, exist_ok=True)
         return out_dir
+
+    @classmethod
+    def _verified_metrics(cls, model_file: Path) -> Dict[str, Any]:
+        """Return recorded provenance only when it belongs to this exact artifact."""
+        metrics = model_file.with_suffix(".metrics.json")
+        if not metrics.is_file():
+            return {"verified": False, "reason": "No training provenance file."}
+        try:
+            data = json.loads(metrics.read_text(encoding="utf-8"))
+        except Exception as exc:
+            return {"verified": False, "reason": f"Unreadable provenance: {exc}"}
+        required = ("verified", "base_model", "base_checkpoint", "trainer_script", "training_engine", "verification", "exit_code", "output_sha256")
+        if data.get("verified") is not True or any(not data.get(key) for key in required[1:]):
+            return {"verified": False, "reason": "Training provenance is incomplete or unverified."}
+        if data.get("training_engine") != "Kohya sd-scripts":
+            return {"verified": False, "reason": "Training engine is not an allow-listed real trainer."}
+        if data.get("exit_code") != 0:
+            return {"verified": False, "reason": "Recorded trainer did not exit successfully."}
+        if not model_file.is_file() or cls._sha256(model_file) != data["output_sha256"]:
+            return {"verified": False, "reason": "Artifact content does not match its training provenance."}
+        if not Path(data["base_checkpoint"]).is_file() or not Path(data["trainer_script"]).is_file():
+            return {"verified": False, "reason": "Recorded trainer or base checkpoint is no longer available."}
+        return {"verified": True, "data": data}
+
+    @classmethod
+    def _artifact_truth(cls, model_file: Path) -> Dict[str, Any]:
+        provenance = cls._verified_metrics(model_file)
+        if not provenance["verified"]:
+            return provenance
+        try:
+            from safetensors import safe_open
+            with safe_open(str(model_file), framework="pt", device="cpu") as handle:
+                keys = list(handle.keys())
+                metadata = handle.metadata() or {}
+            pairs = sum(key.endswith(".lora_down.weight") for key in keys)
+            model = provenance["data"]["base_model"]
+            architecture = metadata.get("modelspec.architecture", "").lower()
+            expected = "stable-diffusion-xl" if model == "sdxl-1.0" else "flux"
+            if pairs < 10 or expected not in architecture:
+                return {"verified": False, "reason": "Tensor layout or model architecture does not match recorded provenance."}
+            return {"verified": True, "data": provenance["data"], "tensor_count": len(keys), "adapter_pairs": pairs}
+        except Exception as exc:
+            return {"verified": False, "reason": f"Invalid safetensors artifact: {exc}"}
 
     @classmethod
     def list_trained_models(cls, project_dir: str) -> List[Dict[str, Any]]:
@@ -39,40 +91,10 @@ class EvaluationService:
             stat = f.stat()
             size_kb = round(stat.st_size / 1024, 1)
             size_mb = round(stat.st_size / (1024 * 1024), 2)
-            is_genuine = stat.st_size >= 5 * 1024 * 1024 # genuine SDXL LoRA is typically 20MB - 100MB+
-
-            # Try to read paired metrics file if present
-            metrics_file = f.with_suffix(".metrics.json")
-            has_metrics = metrics_file.exists()
-            metrics_data = {}
-            if has_metrics:
-                try:
-                    metrics_data = json.loads(metrics_file.read_text(encoding="utf-8"))
-                except Exception:
-                    pass
-
-            base_model_hint = metrics_data.get("base_model", "unknown")
-            if base_model_hint == "unknown":
-                name_lower = f.stem.lower()
-                if "flux" in name_lower:
-                    base_model_hint = "flux-1-dev"
-                elif "qwen" in name_lower:
-                    base_model_hint = "qwen-image"
-                elif "sdxl" in name_lower or is_genuine:
-                    base_model_hint = "sdxl-1.0"
-                elif "wan" in name_lower:
-                    base_model_hint = "wan-2.1-turbo" if "turbo" in name_lower else "wan-2.1-t2v"
-                elif "ltx" in name_lower:
-                    base_model_hint = "ltx-video-turbo" if "turbo" in name_lower else "ltx-video"
-                elif "z-image" in name_lower or "zimage" in name_lower:
-                    base_model_hint = "z-image"
-                elif "minimax" in name_lower:
-                    base_model_hint = "minimax-video"
-                elif "cogvideo" in name_lower:
-                    base_model_hint = "cogvideox-5b"
-
-            status_label = "Genuine LoRA (Full Weights)" if is_genuine else ("Legacy Mock Stub (<1MB)" if stat.st_size < 1024 * 1024 else "Lightweight LoRA")
-            engine = metrics_data.get("training_engine", "Kohya SDXL sd-scripts (CUDA)" if is_genuine else "PyTorch / Dry-Run")
+            truth = cls._artifact_truth(f)
+            metrics_data = truth.get("data", {})
+            is_genuine = truth["verified"]
+            status_label = "Verified real LoRA" if is_genuine else f"Unverified: {truth.get('reason', 'unknown provenance')}"
 
             models.append({
                 "filename": f.name,
@@ -81,16 +103,21 @@ class EvaluationService:
                 "size_mb": size_mb,
                 "is_genuine": is_genuine,
                 "status_label": status_label,
-                "training_engine": engine,
+                "training_engine": metrics_data.get("training_engine"),
                 "modified_timestamp": stat.st_mtime,
                 "modified_datetime": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(stat.st_mtime)),
-                "base_model_hint": base_model_hint,
-                "has_metrics": has_metrics,
+                "base_model_hint": metrics_data.get("base_model"),
+                "has_metrics": f.with_suffix(".metrics.json").exists(),
                 "total_steps": metrics_data.get("total_steps"),
                 "epochs": metrics_data.get("epochs"),
                 "final_loss": metrics_data.get("final_loss"),
                 "learning_rate": metrics_data.get("learning_rate"),
-                "is_empty": stat.st_size < 1024
+                "is_empty": stat.st_size < 1024,
+                "verified": is_genuine,
+                "is_verified": is_genuine,
+                "is_valid_lora": is_genuine,
+                "artifact_valid": is_genuine,
+                "verification_status": status_label,
             })
 
         return models
@@ -124,26 +151,12 @@ class EvaluationService:
                     "error": f"Model file '{model_filename}' not found."
                 }
 
+        truth = cls._artifact_truth(model_file)
+        if not truth["verified"]:
+            return {"success": False, "model_name": model_file.name, "error": truth.get("reason", "Artifact provenance is unverified."), "is_verified": False, "artifact_valid": False}
+
         file_stat = model_file.stat()
         file_size_kb = round(file_stat.st_size / 1024, 1)
-
-        # Quick check for non-safetensors or tiny stub
-        if file_stat.st_size < 500:
-            return {
-                "success": True,
-                "model_name": model_file.name,
-                "file_size_kb": file_size_kb,
-                "format": "safetensors_stub",
-                "status": "Dry-run verification file",
-                "rank": 16,
-                "alpha": 16,
-                "scale": 1.0,
-                "total_parameters": 0,
-                "tensor_count": 0,
-                "tensor_keys": [],
-                "health_check": "DRY_RUN_PLACEHOLDER",
-                "notes": "Generated during dry-run configuration check. Run real GPU training for weight matrices."
-            }
 
         try:
             from safetensors import safe_open
@@ -269,12 +282,15 @@ class EvaluationService:
                 "comfyui_ready": True,
                 "comfyui_deployed": comfy_deployed,
                 "comfyui_path": str((comfy_lora_dir / model_file.name).resolve()) if comfy_lora_dir.exists() else None,
-                "tensors": tensors_info[:12] # Top 12 tensors summary
+                "tensors": tensors_info[:12], # Top 12 tensors summary
+                "is_verified": True,
+                "artifact_valid": True,
+                "verification_status": "Verified real LoRA artifact",
             }
         except Exception as e:
-            logger.warning(f"Non-fatal error inspecting safetensors {model_file}: {e}")
+            logger.warning(f"Failed to inspect safetensors {model_file}: {e}")
             return {
-                "success": True,
+                "success": False,
                 "model_name": model_file.name,
                 "filepath": str(model_file.resolve()),
                 "file_size_kb": file_size_kb,
@@ -312,89 +328,19 @@ class EvaluationService:
         char_name = meta.get("character_name", "character")
         trigger = meta.get("trigger_token", "BendyBot")
 
-        # 2. Check for metrics json
-        metrics_file = None
-        if model_filename:
-            candidate = out_dir / model_filename
-            if candidate.exists():
-                m_file = candidate.with_suffix(".metrics.json")
-                if m_file.exists():
-                    metrics_file = m_file
-        if not metrics_file:
-            # Look for any .metrics.json
-            m_files = list(out_dir.glob("*.metrics.json"))
-            if m_files:
-                metrics_file = m_files[0]
-
-        # 3. If metrics file exists, load it
-        metrics_data: Dict[str, Any] = {}
-        if metrics_file and metrics_file.exists():
-            try:
-                metrics_data = json.loads(metrics_file.read_text(encoding="utf-8"))
-            except Exception:
-                pass
-
-        # 4. Construct or fallback telemetry
-        initial_loss = metrics_data.get("initial_loss", 0.450)
-        final_loss = metrics_data.get("final_loss", 0.142)
-        total_steps = metrics_data.get("total_steps", max(50, dataset_info["total_count"] * 10))
-        epochs = metrics_data.get("epochs", 10)
-        loss_reduction_pct = round((1.0 - (final_loss / max(0.001, initial_loss))) * 100, 1)
-
-        # Loss history curve generation (if not present)
-        loss_history = metrics_data.get("loss_history", [])
-        if not loss_history:
-            # Generate genuine decay curve
-            curve = []
-            steps_count = min(20, total_steps)
-            step_stride = max(1, total_steps // steps_count)
-            for i in range(1, steps_count + 1):
-                cur_step = i * step_stride
-                decay_factor = math.exp(-2.2 * (i / steps_count))
-                cur_loss = round(final_loss + (initial_loss - final_loss) * decay_factor + random.uniform(-0.012, 0.012), 4)
-                curve.append({"step": cur_step, "loss": max(0.05, cur_loss)})
-            loss_history = curve
-
-        # Hardware metrics
-        import torch
-        gpu_name = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU Mode"
-        vram_total_gb = round(torch.cuda.get_device_properties(0).total_memory / (1024**3), 1) if torch.cuda.is_available() else 0
-
-        # ComfyUI status
-        comfy_dir = Path("D:/ComfyUI/ComfyUI/models/loras")
-        comfy_detected = comfy_dir.exists()
-
-        return {
-            "success": True,
-            "project_name": p_dir.name,
-            "character_name": char_name,
-            "trigger_token": trigger,
-            "total_dataset_frames": dataset_info["total_count"],
-            "captioned_frames": dataset_info["captioned_count"],
-            "initial_loss": initial_loss,
-            "final_loss": final_loss,
-            "loss_reduction_percent": loss_reduction_pct,
-            "convergence_status": "CONVERGED" if loss_reduction_pct >= 50 else "MODERATE",
-            "epochs": epochs,
-            "total_steps": total_steps,
-            "loss_history": loss_history,
-            "hardware": {
-                "device": gpu_name,
-                "vram_total_gb": vram_total_gb,
-                "cuda_available": torch.cuda.is_available()
-            },
-            "recommended_inference_settings": {
-                "lora_strength": 0.85,
-                "cfg_scale": 5.0,
-                "steps": 30,
-                "sampler_name": "euler",
-                "scheduler": "simple"
-            },
-            "comfyui": {
-                "installed": comfy_detected,
-                "loras_folder": str(comfy_dir.resolve()) if comfy_detected else None
-            }
-        }
+        # Telemetry is evidence, not a design-time estimate.  Refuse to draw a
+        # convergence curve unless it came from the verified training record.
+        selected = out_dir / model_filename if model_filename else None
+        if selected is None or not selected.is_file():
+            selected = next((Path(item["filepath"]) for item in cls.list_trained_models(project_dir) if item.get("verified")), None)
+        truth = cls._artifact_truth(selected) if selected else {"verified": False, "reason": "No verified LoRA artifact is available."}
+        if not truth["verified"]:
+            return {"success": False, "metrics_verified": False, "telemetry_verified": False, "project_name": p_dir.name, "character_name": char_name, "trigger_token": trigger, "total_dataset_frames": dataset_info["total_count"], "captioned_frames": dataset_info["captioned_count"], "error": truth.get("reason", "No verified telemetry.")}
+        verified_metrics = truth["data"]
+        history = verified_metrics.get("loss_history") or []
+        initial, final = verified_metrics.get("initial_loss"), verified_metrics.get("final_loss")
+        reduction = round((1 - final / max(initial, 0.001)) * 100, 1) if initial is not None and final is not None else None
+        return {"success": True, "metrics_verified": True, "telemetry_verified": True, "project_name": p_dir.name, "character_name": char_name, "trigger_token": trigger, "total_dataset_frames": dataset_info["total_count"], "captioned_frames": dataset_info["captioned_count"], "model_filename": selected.name, "base_model": verified_metrics["base_model"], "initial_loss": initial, "final_loss": final, "loss_reduction_percent": reduction, "convergence_status": "CONVERGED" if reduction is not None and reduction >= 50 else "INSUFFICIENT_EVIDENCE", "total_steps": verified_metrics.get("total_steps"), "loss_history": history, "training_engine": verified_metrics["training_engine"], "artifact_verified": True}
 
     @classmethod
     def generate_suggested_prompts(cls, project_dir: str) -> Dict[str, Any]:
@@ -614,6 +560,16 @@ class EvaluationService:
         test_renders_dir.mkdir(parents=True, exist_ok=True)
         out_dir = p_dir / "Training" / "output"
 
+        lora_candidate = None
+        if lora_scale > 0.001:
+            if not model_filename:
+                raise ValueError("Select a verified LoRA artifact before rendering with non-zero LoRA scale.")
+            lora_candidate = out_dir / model_filename
+            if not lora_candidate.exists(): lora_candidate = Path(model_filename)
+            if not lora_candidate.exists(): raise FileNotFoundError(f"Selected LoRA file '{model_filename}' was not found.")
+            artifact = cls._artifact_truth(lora_candidate)
+            if not artifact["verified"]: raise ValueError(f"Selected LoRA is unverified: {artifact.get('reason', 'missing provenance')}")
+
         meta = cls.get_training_analytics(project_dir)
         trigger = meta.get("trigger_token", "BendyBot")
 
@@ -643,6 +599,8 @@ class EvaluationService:
             pipe = cls.get_real_diffusion_pipe(base_checkpoint) if base_checkpoint else cls.get_real_diffusion_pipe()
         except TypeError:
             pipe = cls.get_real_diffusion_pipe()
+        if pipe is None:
+            raise RuntimeError("Real SDXL inference is unavailable: CUDA pipeline or compatible checkpoint could not be loaded.")
         if pipe is not None:
             active_ckpt_name = Path(cls._cached_ckpt_path).name if cls._cached_ckpt_path else "SDXL Base 1.0"
             try:
@@ -661,22 +619,8 @@ class EvaluationService:
                     lora_status_note = f"Pure Base Model [{active_ckpt_name}] (0.00 LoRA Weight)"
                     logger.info("Test Bench: Running 100% pure base model inference.")
                 else:
-                    lora_candidate = out_dir / model_filename
-                    if not lora_candidate.exists():
-                        lora_candidate = Path(model_filename)
-
-                    if not lora_candidate.exists():
-                        raise FileNotFoundError(f"Selected LoRA file '{model_filename}' not found in {out_dir}.")
-
                     file_size = lora_candidate.stat().st_size
                     lora_size_mb = round(file_size / (1024 * 1024), 2)
-
-                    # Guard against old legacy dry-run mock files (<1MB)
-                    if file_size < 1024 * 1024:
-                        raise ValueError(
-                            f"'{lora_candidate.name}' is an old stub file ({lora_size_mb} MB) from earlier tests. "
-                            f"Please select a genuine LoRA model (e.g. 'test_real_kohya_fitted.safetensors', ~96.8 MB) or run a new training session."
-                        )
 
                     is_genuine_lora = True
                     pipe.load_lora_weights(str(lora_candidate.resolve()), adapter_name="active_lora")
@@ -708,28 +652,6 @@ class EvaluationService:
                 logger.error(f"Diffusion generation error: {diff_err}", exc_info=True)
                 raise RuntimeError(f"SDXL Diffusion Inference failed: {diff_err}")
 
-        # 2. Clean Line-Art Preview for Offline / Test Suite Environments (NO BROWN NOISE)
-        if rendered_img is None:
-            engine_used = "Offline Test Mode"
-            lora_status_note = "Offline preview (No CUDA pipeline loaded)"
-            keyframes_dir = p_dir / "Keyframes_Out"
-            valid_exts = {".png", ".jpg", ".jpeg", ".webp"}
-            sample_images = sorted([f for f in keyframes_dir.iterdir() if f.is_file() and f.suffix.lower() in valid_exts]) if keyframes_dir.exists() else []
-
-            if sample_images:
-                anchor_path = sample_images[seed % len(sample_images)]
-                try:
-                    raw_im = Image.open(anchor_path).convert("RGB")
-                    base_img = DatasetService.fit_image_aspect_ratio(
-                        raw_im, target_width=W, target_height=H, mode=framing_mode, bg_color=(250, 250, 250)
-                    )
-                except Exception:
-                    base_img = Image.new("RGB", (W, H), (250, 250, 250))
-            else:
-                base_img = Image.new("RGB", (W, H), (250, 250, 250))
-
-            rendered_img = base_img
-
         # Save output image
         timestamp_str = time.strftime("%Y%m%d_%H%M%S")
         weight_tag = f"w{int(lora_scale * 100):03d}"
@@ -760,7 +682,9 @@ class EvaluationService:
             "lora_applied": lora_applied,
             "lora_size_mb": lora_size_mb,
             "is_genuine_lora": is_genuine_lora,
-            "lora_status": lora_status_note
+            "lora_status": lora_status_note,
+            "render_verified": True,
+            "real_inference": True,
         }
 
 
@@ -800,6 +724,12 @@ class EvaluationService:
                     "error": f"Model file '{model_filename}' not found."
                 }
 
+        truth = cls._artifact_truth(source_file)
+        if not truth["verified"]:
+            return {"success": False, "error": f"Refusing deployment of unverified artifact: {truth.get('reason', 'unknown provenance')}"}
+        if truth["data"].get("base_model") != "sdxl-1.0":
+            return {"success": False, "error": "This ComfyUI test workflow supports verified SDXL LoRAs only."}
+
         dest_file = comfy_lora_dir / source_file.name
         try:
             shutil.copy2(str(source_file), str(dest_file))
@@ -813,7 +743,7 @@ class EvaluationService:
 
             test_workflow = {
                 "1": {
-                    "inputs": {"ckpt_name": "flux1-dev.safetensors"},
+                    "inputs": {"ckpt_name": Path(truth["data"]["base_checkpoint"]).name},
                     "class_type": "CheckpointLoaderSimple"
                 },
                 "2": {

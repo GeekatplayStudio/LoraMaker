@@ -7,7 +7,10 @@ def test_supervisor_get_available_models():
     models_info = SupervisorAgent.get_available_models()
     assert "best_vision_model" in models_info
     assert "supported_lora_architectures" in models_info
-    assert len(models_info["supported_lora_architectures"]) >= 4
+    # The supervisor must expose only locally executable backends, not the
+    # aspirational architecture catalogue.
+    assert {model["id"] for model in models_info["supported_lora_architectures"]} <= {"sdxl-1.0", "flux-1-dev", "minimax-video"}
+    assert models_info["recommended_video_model"] in {None, "minimax-video"}
 
 def test_supervisor_start_new_project(temp_project_dir):
     res = SupervisorAgent.start_new_project(

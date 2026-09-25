@@ -2,11 +2,33 @@
 const Training = {
     selectedModel: "flux-1-dev",
     pollInterval: null,
+    capabilities: new Map(),
+
+    // A file's size is not evidence that it is a usable LoRA.  The API is the
+    // authority for provenance/validation; older API responses intentionally
+    // remain "unverified" instead of being promoted based on a heuristic.
+    modelTruth(model) {
+        const verified = model.verified === true || model.is_verified === true ||
+            model.is_valid_lora === true || model.artifact_verified === true;
+        const unavailable = model.available === false || model.training_supported === false ||
+            model.render_supported === false || model.is_valid_lora === false ||
+            model.artifact_valid === false;
+        const label = model.verification_status || model.artifact_status;
+
+        if (unavailable) return { unavailable: true, className: "badge-warning", text: `⚠️ ${label || "Unavailable / invalid artifact"}`, color: "#fca5a5" };
+        if (verified) return { unavailable: false, className: "badge-optimal", text: `✓ ${label || "Verified LoRA artifact"}`, color: "#34d399" };
+        return { unavailable: false, className: "badge-warning", text: `? ${label || "Unverified artifact"}`, color: "#fde68a" };
+    },
 
     init() {
         // Model card selection
         document.querySelectorAll(".model-card").forEach(card => {
             card.addEventListener("click", () => {
+                const capability = this.capabilities.get(card.getAttribute("data-model-id"));
+                if (capability && capability.available === false) {
+                    showToast(capability.reason || "No compatible local trainer is available for this model.", "error");
+                    return;
+                }
                 document.querySelectorAll(".model-card").forEach(c => c.classList.remove("selected"));
                 card.classList.add("selected");
                 this.selectedModel = card.getAttribute("data-model-id");
@@ -50,8 +72,27 @@ const Training = {
         document.getElementById("btn-refresh-vault")?.addEventListener("click", () => this.loadLoRAVault());
 
         // Initial loads
+        this.loadCapabilities();
         this.loadDatasetManifest();
         this.loadLoRAVault();
+    },
+
+    async loadCapabilities() {
+        try {
+            const response = await fetch("/api/training/capabilities");
+            const data = await response.json();
+            [...(data.architectures || []), ...(data.unavailable_architectures || [])].forEach(item => this.capabilities.set(item.id, item));
+            document.querySelectorAll(".model-card").forEach(card => {
+                const capability = this.capabilities.get(card.getAttribute("data-model-id"));
+                if (capability && capability.available === false) {
+                    card.style.opacity = "0.45";
+                    card.title = capability.reason || (capability.missing_requirements || []).join(", ");
+                    card.setAttribute("aria-disabled", "true");
+                }
+            });
+        } catch (error) {
+            console.warn("Training capability check failed", error);
+        }
     },
 
     async loadDatasetManifest() {
@@ -99,23 +140,22 @@ const Training = {
 
             if (data.models && data.models.length > 0) {
                 tbody.innerHTML = data.models.map(m => {
-                    const isGenuine = m.is_genuine || m.size_mb > 5.0;
-                    const badgeClass = isGenuine ? 'badge-optimal' : 'badge-warning';
-                    const badgeText = isGenuine ? `✅ Genuine LoRA (${m.size_mb} MB)` : `⚠️ Mock Stub (${m.size_kb} KB)`;
+                    const truth = this.modelTruth(m);
+                    const testButton = truth.unavailable
+                        ? `<button class="btn-secondary" style="padding: 4px 10px; font-size: 0.75rem;" disabled title="The backend marked this artifact unavailable">Unavailable</button>`
+                        : `<button class="btn-secondary" style="padding: 4px 10px; font-size: 0.75rem;" onclick="Evaluation.selectAndGoToBench('${m.filename}')">🧪 Test in Lab</button>`;
 
                     return `
                         <tr>
-                            <td class="mono" style="font-weight: 600; color: ${isGenuine ? '#34d399' : '#fde68a'};">${m.filename}</td>
+                            <td class="mono" style="font-weight: 600; color: ${truth.color};">${m.filename}</td>
                             <td class="mono" style="font-weight: 700;">${m.size_mb > 0 ? m.size_mb + ' MB' : m.size_kb + ' KB'}</td>
-                            <td><span class="eval-badge ${badgeClass}">${badgeText}</span></td>
-                            <td class="mono">${m.base_model_hint || 'sdxl-1.0'}</td>
-                            <td style="font-size: 0.76rem; color: var(--text-dim);">${m.training_engine || 'Kohya / PyTorch'}</td>
+                            <td><span class="eval-badge ${truth.className}">${truth.text}</span></td>
+                            <td class="mono">${m.base_model_hint || 'Unknown — not verified'}</td>
+                            <td style="font-size: 0.76rem; color: var(--text-dim);">${m.training_engine || 'No engine provenance recorded'}</td>
                             <td class="mono">${m.total_steps ? `${m.total_steps} steps (loss: ${m.final_loss || 'N/A'})` : 'N/A'}</td>
                             <td style="font-size: 0.75rem; color: var(--text-dim);">${m.modified_datetime || 'Recently'}</td>
                             <td>
-                                <button class="btn-secondary" style="padding: 4px 10px; font-size: 0.75rem;" onclick="Evaluation.selectAndGoToBench('${m.filename}')">
-                                    🧪 Test in Lab
-                                </button>
+                                ${testButton}
                             </td>
                         </tr>
                     `;
@@ -207,6 +247,60 @@ const Training = {
         ctx.fillText(minLoss.toFixed(2), paddingLeft - 5, h - paddingBottom);
     },
 
+    async loadModelProfile(modelId) {
+        if (!AppState.projectDir) return;
+        try {
+            const res = await fetch(`/api/training/auto_tune?project_dir=${encodeURIComponent(AppState.projectDir)}&base_model=${encodeURIComponent(modelId)}`);
+            if (!res.ok) return;
+            const params = await res.json();
+
+            const setVal = (id, val) => {
+                const el = document.getElementById(id);
+                if (el && val !== undefined) el.value = val;
+            };
+
+            setVal("train-rank-input", params.lora_rank);
+            setVal("train-alpha-input", params.lora_alpha);
+            setVal("train-lr-input", params.learning_rate);
+            setVal("train-epochs-input", params.recommended_epochs);
+            setVal("train-repeats-input", params.recommended_repeats);
+            setVal("train-batch-input", params.batch_size);
+
+            const badge = document.getElementById("auto-tune-badge");
+            if (badge) {
+                badge.innerHTML = `⚡ <strong>Hardware Auto-Tuned</strong> for ${params.device_name || 'GPU'} (${params.vram_tier}): Batch=${params.batch_size}, LR=${params.learning_rate}, ${params.target_total_steps} target steps (${params.recommended_epochs} epochs × ${params.recommended_repeats} repeats).`;
+                badge.style.display = "block";
+            }
+        } catch (e) {
+            console.warn("Auto-tune error:", e);
+        }
+    },
+
+    async startTraining() {
+        if (!AppState.projectDir) return showToast("Create or select a project first.", "error");
+        const capability = this.capabilities.get(this.selectedModel);
+        if (capability && capability.available === false) return showToast(capability.reason || "No matching local trainer is available.", "error");
+        const value = id => document.getElementById(id)?.value;
+        const payload = {project_dir: AppState.projectDir, base_model: this.selectedModel,
+            lora_rank: Number(value("train-rank-input")), lora_alpha: Number(value("train-alpha-input")),
+            learning_rate: Number(value("train-lr-input")), epochs: Number(value("train-epochs-input")),
+            repeats: Number(value("train-repeats-input")), batch_size: Number(value("train-batch-input")),
+            execution_mode: value("train-exec-mode"), framing_mode: value("train-framing-mode")};
+        const button = document.getElementById("btn-start-training");
+        try {
+            if (button) button.disabled = true;
+            const response = await fetch("/api/training/start", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(payload)});
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.detail || "Training preflight failed");
+            showToast(data.status === "validated" ? "Preflight passed; no weights were created." : "Real training started.", "success");
+            if (data.status === "started") this.startPollingStatus();
+            else if (button) button.disabled = false;
+        } catch (error) {
+            if (button) button.disabled = false;
+            showToast(error.message, "error");
+        }
+    },
+
     startPollingStatus() {
         if (this.pollInterval) clearInterval(this.pollInterval);
 
@@ -224,10 +318,15 @@ const Training = {
 
                 if (progressBar) progressBar.style.width = `${data.progress_percent}%`;
                 if (statusText) statusText.textContent = `Status: ${data.status.toUpperCase()} (${data.current_step}/${data.total_steps})`;
-                if (lossText) lossText.textContent = `Current Loss: ${data.current_loss}`;
+                const telemetryVerified = data.telemetry_verified === true || data.metrics_verified === true;
+                if (lossText) lossText.textContent = telemetryVerified
+                    ? `Current Loss: ${data.current_loss ?? "N/A"}`
+                    : "Current Loss: telemetry not verified";
 
-                if (data.loss_history) {
+                if (telemetryVerified && data.loss_history) {
                     this.drawLossChart(data.loss_history);
+                } else if (!telemetryVerified) {
+                    this.drawLossChart([]);
                 }
 
                 if (logViewer && data.log) {
@@ -243,7 +342,10 @@ const Training = {
                         btn.innerHTML = "<span>🚀 Launch LoRA Training Run</span>";
                     }
                     if (data.status === "completed") {
-                        showToast("LoRA Training Run Completed! Real weights saved in Training/output", "success");
+                        showToast(data.artifact_verified === true || data.output_verified === true
+                            ? "Training completed and the output artifact was verified."
+                            : "Training completed, but output verification is still required.",
+                            data.artifact_verified === true || data.output_verified === true ? "success" : "error");
                         this.loadLoRAVault();
                         this.loadDatasetManifest();
                     } else {

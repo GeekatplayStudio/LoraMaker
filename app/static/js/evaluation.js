@@ -4,6 +4,29 @@ window.Evaluation = {
     selectedModel: null,
     currentPrompts: [],
     currentInspection: null,
+    modelsByFilename: {},
+
+    modelTruth(model) {
+        const verified = model.verified === true || model.is_verified === true ||
+            model.is_valid_lora === true || model.artifact_verified === true;
+        const unavailable = model.available === false || model.training_supported === false ||
+            model.render_supported === false || model.is_valid_lora === false ||
+            model.artifact_valid === false;
+        const label = model.verification_status || model.artifact_status;
+        if (unavailable) return { verified: false, unavailable: true, label: label || "Unavailable / invalid artifact" };
+        if (verified) return { verified: true, unavailable: false, label: label || "Verified LoRA artifact" };
+        return { verified: false, unavailable: false, label: label || "Unverified artifact" };
+    },
+
+    renderTruth(data) {
+        const simulated = data.simulated === true || data.is_simulation === true ||
+            data.render_mode === "simulation" || data.inference_mode === "simulation";
+        const verified = !simulated && (data.real_inference === true || data.inference_verified === true ||
+            data.render_verified === true);
+        if (simulated) return { verified: false, label: "Simulation — not a model inference result", color: "#fca5a5" };
+        if (verified) return { verified: true, label: "Verified model inference", color: "#34d399" };
+        return { verified: false, label: "Inference provenance not verified", color: "#fde68a" };
+    },
 
     init() {
         // Event Listeners
@@ -105,29 +128,28 @@ window.Evaluation = {
             // 1. Fetch available models
             const res = await fetch(`/api/evaluation/models?project_dir=${encodeURIComponent(AppState.projectDir)}`);
             const data = await res.json();
+            this.modelsByFilename = Object.fromEntries((data.models || []).map(model => [model.filename, model]));
 
             const modelSelect = document.getElementById("eval-model-select");
             if (modelSelect) {
                 modelSelect.innerHTML = "";
                 if (data.models && data.models.length > 0) {
-                    let firstGenuine = null;
+                    let firstVerified = null;
                     data.models.forEach((m, idx) => {
                         const opt = document.createElement("option");
                         opt.value = m.filename;
-                        const isGenuine = m.is_genuine || m.size_mb > 5.0;
-                        if (isGenuine && !firstGenuine) firstGenuine = m.filename;
-
-                        opt.textContent = isGenuine
-                            ? `✅ ${m.filename} [Genuine LoRA - ${m.size_mb} MB]`
-                            : `⚠️ ${m.filename} [Mock Stub - ${m.size_kb} KB]`;
+                        const truth = this.modelTruth(m);
+                        if (truth.verified && !firstVerified) firstVerified = m.filename;
+                        opt.disabled = truth.unavailable;
+                        opt.textContent = `${truth.verified ? "✓" : truth.unavailable ? "⚠️" : "?"} ${m.filename} [${truth.label}]`;
                         
                         modelSelect.appendChild(opt);
                     });
 
-                    // Auto-select genuine LoRA if present
-                    if (firstGenuine) {
-                        modelSelect.value = firstGenuine;
-                        this.selectedModel = firstGenuine;
+                    // Prefer an artifact the backend actually verified. Never use file size as a proxy.
+                    if (firstVerified) {
+                        modelSelect.value = firstVerified;
+                        this.selectedModel = firstVerified;
                     } else {
                         modelSelect.selectedIndex = 0;
                         this.selectedModel = data.models[0].filename;
@@ -154,6 +176,11 @@ window.Evaluation = {
     },
 
     selectAndGoToBench(filename) {
+        const model = this.modelsByFilename[filename];
+        if (model && this.modelTruth(model).unavailable) {
+            showToast("This artifact is unavailable or invalid and cannot be tested.", "error");
+            return;
+        }
         this.selectedModel = filename;
         const select = document.getElementById("eval-model-select");
         if (select) select.value = filename;
@@ -186,14 +213,14 @@ window.Evaluation = {
             const elComfyStatus = document.getElementById("eval-comfy-status");
 
             if (elModelName) elModelName.textContent = data.model_name || "N/A";
-            if (elRankAlpha) elRankAlpha.textContent = `Rank: ${data.rank || 16} | Alpha: ${data.alpha || 16} (Scale: ${data.scale || 1.0})`;
-            if (elParams) elParams.textContent = `${(data.total_parameters || 0).toLocaleString()} weights`;
-            if (elDeltaNorm) elDeltaNorm.textContent = `ΔW Norm: ${data.delta_weight_magnitude || 0.000000}`;
+            if (elRankAlpha) elRankAlpha.textContent = data.inspection_verified === false ? "Unverified inspection" : `Rank: ${data.rank ?? "N/A"} | Alpha: ${data.alpha ?? "N/A"} (Scale: ${data.scale ?? "N/A"})`;
+            if (elParams) elParams.textContent = data.inspection_verified === false ? "Not measured" : `${(data.total_parameters || 0).toLocaleString()} weights`;
+            if (elDeltaNorm) elDeltaNorm.textContent = data.inspection_verified === false ? "ΔW Norm: not measured" : `ΔW Norm: ${data.delta_weight_magnitude ?? "N/A"}`;
             
             if (elHealthBadge) {
                 if (data.health_grade === "OPTIMAL") {
-                    elHealthBadge.className = "eval-badge badge-optimal";
-                    elHealthBadge.textContent = "✅ Active Gradient Updates";
+                    elHealthBadge.className = data.inspection_verified === true ? "eval-badge badge-optimal" : "eval-badge badge-warning";
+                    elHealthBadge.textContent = data.inspection_verified === true ? "✓ Verified artifact health" : "Artifact health not verified";
                 } else if (data.health_grade === "LOW_DELTA") {
                     elHealthBadge.className = "eval-badge badge-warning";
                     elHealthBadge.textContent = "⚠️ Low Delta Magnitude";
@@ -248,8 +275,9 @@ window.Evaluation = {
             const elLossCurve = document.getElementById("eval-stat-loss-curve");
             const elHardware = document.getElementById("eval-stat-hardware");
 
-            if (elLossRed) elLossRed.textContent = `-${data.loss_reduction_percent || 0}%`;
-            if (elLossCurve) elLossCurve.textContent = `${data.initial_loss} ➔ ${data.final_loss} (${data.epochs || 10} epochs)`;
+            const telemetryVerified = data.telemetry_verified === true || data.metrics_verified === true;
+            if (elLossRed) elLossRed.textContent = telemetryVerified ? `-${data.loss_reduction_percent ?? "N/A"}%` : "No verified telemetry";
+            if (elLossCurve) elLossCurve.textContent = telemetryVerified ? `${data.initial_loss ?? "N/A"} ➔ ${data.final_loss ?? "N/A"} (${data.epochs ?? "N/A"} epochs)` : "Metrics were not recorded by training";
             if (elHardware && data.hardware) {
                 elHardware.textContent = `${data.hardware.device} (${data.hardware.vram_total_gb} GB VRAM)`;
             }
@@ -381,6 +409,11 @@ window.Evaluation = {
         }
 
         const loraScale = scaleInput ? parseFloat(scaleInput.value) : 0.85;
+        const selected = this.modelsByFilename[this.selectedModel];
+        if (loraScale > 0 && selected && this.modelTruth(selected).unavailable) {
+            showToast("The selected artifact is unavailable or invalid. Choose a compatible model or set LoRA scale to 0.", "error");
+            return;
+        }
         const seed = seedInput ? parseInt(seedInput.value, 10) : 42;
         const negPrompt = negPromptInput ? negPromptInput.value.trim() : "";
         const aspectRatio = aspectInput ? aspectInput.value : "1:1";
@@ -416,9 +449,11 @@ window.Evaluation = {
 
             if (data.success && data.image_base64) {
                 if (viewport) {
-                    const loraBadgeText = data.lora_applied ? `🔥 LoRA (${data.lora_scale})` : `🎯 Pure Base Model`;
-                    const loraBadgeColor = data.lora_applied ? '#fbbf24' : '#38bdf8';
-                    const genuineTag = data.is_genuine_lora ? ` [Genuine ${data.lora_size_mb} MB]` : '';
+                    const truth = this.renderTruth(data);
+                    const loraBadgeText = data.lora_applied === true
+                        ? `LoRA requested (${data.lora_scale})`
+                        : "Base-model request";
+                    const loraBadgeColor = truth.verified && data.lora_applied === true ? '#34d399' : truth.color;
 
                     viewport.innerHTML = `
                         <img src="${data.image_base64}" alt="LoRA Test Cel" id="test-cel-img" />
@@ -429,7 +464,7 @@ window.Evaluation = {
                             <span>|</span>
                             <span>${data.base_checkpoint || 'SDXL Base'}</span>
                             <span>|</span>
-                            <span style="color: ${loraBadgeColor}; font-weight: 600;">${loraBadgeText}${genuineTag}</span>
+                            <span style="color: ${loraBadgeColor}; font-weight: 600;">${truth.label}: ${loraBadgeText}</span>
                         </div>
                     `;
                 }
@@ -445,7 +480,10 @@ window.Evaluation = {
                     };
                 }
 
-                showToast(`Test Cel frame synthesized in ${data.render_time_seconds}s!`, "success");
+                const truth = this.renderTruth(data);
+                showToast(truth.verified
+                    ? `Verified inference completed in ${data.render_time_seconds}s.`
+                    : `Image returned, but ${truth.label.toLowerCase()}.`, truth.verified ? "success" : "error");
             } else {
                 const errMsg = data.error || data.detail || "Unknown error";
                 showToast("Render failed: " + errMsg, "error");
@@ -455,7 +493,7 @@ window.Evaluation = {
                             <div style="font-size: 2rem; margin-bottom: 8px;">⚠️</div>
                             <h3>Inference Diagnostics Notice</h3>
                             <p style="font-size: 0.85rem; color: #fde68a; max-width: 500px; margin: 8px auto;">${errMsg}</p>
-                            <p style="font-size: 0.76rem; color: var(--text-dim); margin-top: 12px;">Tip: Select a genuine LoRA file (e.g. 'test_real_kohya_fitted.safetensors', ~96.8 MB) or set LoRA Weight to 0.00 for pure base model generation.</p>
+                            <p style="font-size: 0.76rem; color: var(--text-dim); margin-top: 12px;">Use an artifact the backend has verified as compatible with the selected base checkpoint. File size alone does not establish validity.</p>
                         </div>
                     `;
                 }
@@ -491,6 +529,11 @@ window.Evaluation = {
             showToast("Please enter a prompt to compare", "error");
             return;
         }
+        const selected = this.modelsByFilename[this.selectedModel];
+        if (selected && this.modelTruth(selected).unavailable) {
+            showToast("The selected artifact is unavailable or invalid and cannot be used for an A/B render.", "error");
+            return;
+        }
 
         const seed = seedInput ? parseInt(seedInput.value, 10) : 42;
         const negPrompt = negPromptInput ? negPromptInput.value.trim() : "";
@@ -507,8 +550,8 @@ window.Evaluation = {
             viewport.innerHTML = `
                 <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; color: var(--text-dim); gap: 10px; min-height: 250px;">
                     <div class="pulse-dot" style="width: 20px; height: 20px; background: var(--amber-primary);"></div>
-                    <div style="font-weight: 600; color: #fde68a;">Executing Dual Latent Diffusion Passes on CUDA...</div>
-                    <div style="font-size: 0.8rem; color: var(--text-dim);">Pass 1: Pure SDXL Base (0.00) ➔ Pass 2: Full LoRA Style (1.00)</div>
+                    <div style="font-weight: 600; color: #fde68a;">Requesting paired renders from the backend...</div>
+                    <div style="font-size: 0.8rem; color: var(--text-dim);">The result will be labeled unverified unless the backend confirms real inference.</div>
                 </div>
             `;
         }
@@ -554,39 +597,42 @@ window.Evaluation = {
 
             if (data0.success && data1.success) {
                 if (viewport) {
+                    const baseTruth = this.renderTruth(data0);
+                    const loraTruth = this.renderTruth(data1);
                     viewport.innerHTML = `
                         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; width: 100%; height: 100%; padding: 8px;">
                             <!-- Left: 0.0 Base Model -->
                             <div style="display: flex; flex-direction: column; background: rgba(10, 12, 16, 0.85); border-radius: 8px; overflow: hidden; border: 1px solid var(--border-color);">
                                 <div style="padding: 6px 12px; background: rgba(56, 189, 248, 0.15); display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color);">
-                                    <span style="font-weight: 700; color: #38bdf8; font-size: 0.8rem;">🟢 PURE BASE MODEL (0.00 LoRA)</span>
+                                    <span style="font-weight: 700; color: ${baseTruth.color}; font-size: 0.8rem;">Base request — ${baseTruth.label}</span>
                                     <span class="mono" style="font-size: 0.7rem; color: var(--text-dim);">${data0.render_time_seconds}s</span>
                                 </div>
                                 <div style="flex: 1; display: flex; align-items: center; justify-content: center; overflow: hidden; padding: 6px;">
                                     <img src="${data0.image_base64}" alt="Base Model Output" style="max-width: 100%; max-height: 380px; object-fit: contain; border-radius: 4px;" />
                                 </div>
                                 <div class="mono" style="padding: 4px 8px; font-size: 0.7rem; color: var(--text-dim); background: rgba(0,0,0,0.5); text-align: center;">
-                                    ${data0.base_checkpoint || 'SDXL Base 1.0'} | Baseline Prompt
+                                    ${data0.base_checkpoint || 'Base checkpoint not reported'} | Baseline prompt
                                 </div>
                             </div>
 
                             <!-- Right: 1.0 LoRA Model -->
                             <div style="display: flex; flex-direction: column; background: rgba(10, 12, 16, 0.85); border-radius: 8px; overflow: hidden; border: 1px solid var(--amber-primary);">
                                 <div style="padding: 6px 12px; background: rgba(245, 158, 11, 0.2); display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color);">
-                                    <span style="font-weight: 700; color: #fbbf24; font-size: 0.8rem;">🟣 100% LORA ADAPTED (1.00 Weight)</span>
+                                    <span style="font-weight: 700; color: ${loraTruth.color}; font-size: 0.8rem;">LoRA request — ${loraTruth.label}</span>
                                     <span class="mono" style="font-size: 0.7rem; color: var(--text-dim);">${data1.render_time_seconds}s</span>
                                 </div>
                                 <div style="flex: 1; display: flex; align-items: center; justify-content: center; overflow: hidden; padding: 6px;">
                                     <img src="${data1.image_base64}" alt="LoRA Adapted Output" style="max-width: 100%; max-height: 380px; object-fit: contain; border-radius: 4px;" />
                                 </div>
                                 <div class="mono" style="padding: 4px 8px; font-size: 0.7rem; color: var(--text-dim); background: rgba(0,0,0,0.5); text-align: center;">
-                                    LoRA: ${this.selectedModel || 'Active'} | ${data1.lora_size_mb || 0} MB
+                                    LoRA: ${this.selectedModel || 'None selected'} | ${data1.lora_applied === true ? 'backend reports applied' : 'not reported applied'}
                                 </div>
                             </div>
                         </div>
                     `;
                 }
-                showToast("A/B Comparison Render Complete!", "success");
+                const pairVerified = this.renderTruth(data0).verified && this.renderTruth(data1).verified;
+                showToast(pairVerified ? "Verified A/B inference complete." : "A/B images returned, but inference provenance is not verified.", pairVerified ? "success" : "error");
             } else {
                 throw new Error(data0.error || data1.error || "Comparison render failed");
             }

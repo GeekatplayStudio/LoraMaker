@@ -34,10 +34,10 @@ def test_generate_comfyui_workflow(temp_project_dir):
     assert p.exists()
     content = p.read_text(encoding="utf-8")
     assert "wan-2.1-t2v" in content
-    assert "LoRADatasetLoader" in content
-    assert "WanVideoLoRATrainer" in content
+    assert '"executable": false' in content
+    assert "No installed ComfyUI trainer nodes were verified" in content
 
-def test_start_training_pipeline(temp_project_dir):
+def test_start_training_rejects_invalid_images_and_never_falls_back(temp_project_dir):
     DatasetService.initialize_project(temp_project_dir, "PipelineTest", "BendyBot")
     keyframes_dir = Path(temp_project_dir) / "Keyframes_Out"
 
@@ -46,22 +46,11 @@ def test_start_training_pipeline(temp_project_dir):
         (keyframes_dir / f"BendyBot_{i:04d}.png").write_bytes(b"image")
         (keyframes_dir / f"BendyBot_{i:04d}.txt").write_text(f"BendyBot, frame {i}", encoding="utf-8")
 
-    result = TrainingService.start_training_pipeline(
-        project_dir=temp_project_dir,
-        base_model="flux-1-dev",
-        epochs=1,
-        repeats=2
-    )
+    with pytest.raises(ValueError, match="valid, fully captioned keyframes"):
+        TrainingService.start_training_pipeline(project_dir=temp_project_dir, base_model="sdxl-1.0", execution_mode="validate_only")
+    assert not list((Path(temp_project_dir) / "Training" / "output").glob("*.safetensors"))
 
-    assert result["status"] == "started"
-    assert Path(result["config_toml"]).exists()
-
-    # Query status
-    status = TrainingService.get_job_status(temp_project_dir)
-    assert status["status"] in ["running", "completed"]
-    assert len(status["log"]) > 0
-
-def test_qwen_and_zimage_configs(temp_project_dir):
+def test_unsupported_architectures_are_recorded_but_not_claimed_executable(temp_project_dir):
     DatasetService.initialize_project(temp_project_dir, "QwenZProj", "BendyBot")
     
     # Test Qwen Image Kohya config
@@ -73,8 +62,7 @@ def test_qwen_and_zimage_configs(temp_project_dir):
     )
     assert Path(qwen_toml).exists()
     content = Path(qwen_toml).read_text(encoding="utf-8")
-    assert "Qwen/Qwen2.5-VL-7B-Instruct" in content
-    assert "networks.qwen_lora" in content
+    assert 'trainer_supported = false' in content
 
     # Test Z-Image ComfyUI workflow
     zimage_wf = TrainingService.generate_comfyui_workflow(
@@ -85,5 +73,5 @@ def test_qwen_and_zimage_configs(temp_project_dir):
     )
     assert Path(zimage_wf).exists()
     wf_content = Path(zimage_wf).read_text(encoding="utf-8")
-    assert "ZImageDiTTrainer" in wf_content
+    assert '"executable": false' in wf_content
     assert "z-image" in wf_content

@@ -31,9 +31,10 @@ def test_dataset_tracking_and_exports(temp_project_dir):
     keyframes_dir = Path(temp_project_dir) / "Keyframes_Out"
 
     # Create 3 synthetic frames
+    from PIL import Image
     for i in range(1, 4):
         img_file = keyframes_dir / f"OldManPete_{i:04d}.png"
-        img_file.write_bytes(b"dummy_image_data")
+        Image.new("RGB", (64, 64), (i * 20, 30, 40)).save(img_file)
         txt_file = keyframes_dir / f"OldManPete_{i:04d}.txt"
         txt_file.write_text(f"OldManPete, cel scan pose #{i}", encoding="utf-8")
 
@@ -74,3 +75,11 @@ def test_caption_update_and_delete(temp_project_dir):
     assert del_res["success"] is True
     assert not img.exists()
     assert not (keyframes_dir / "Bendy_0001.txt").exists()
+
+def test_export_rejects_corrupt_reference_image(temp_project_dir):
+    DatasetService.initialize_project(temp_project_dir, "Integrity", "Bendy")
+    keyframes = Path(temp_project_dir) / "Keyframes_Out"
+    (keyframes / "Bendy_0001.png").write_bytes(b"not a png")
+    (keyframes / "Bendy_0001.txt").write_text("Bendy, cel scan", encoding="utf-8")
+    with pytest.raises(ValueError, match="Unreadable reference image"):
+        DatasetService.export_for_kohya(temp_project_dir)

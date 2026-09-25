@@ -1,6 +1,7 @@
 import json
 import shutil
 import logging
+import hashlib
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, Any, List, Optional
@@ -13,6 +14,14 @@ class DatasetService:
     Manages project lifecycle, folder creation, keyframe/caption tracking,
     and dataset formatting for Kohya_ss and ComfyUI LoRA training.
     """
+
+    @staticmethod
+    def _sha256(path: Path) -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
 
     @staticmethod
     def fit_image_aspect_ratio(
@@ -349,6 +358,7 @@ class DatasetService:
             dst_txt = concept_dir / src_txt.name
 
             orig_w, orig_h = 0, 0
+            color_mode = "unknown"
             is_upscaled = False
             aspect_str = "1:1"
 
@@ -356,6 +366,7 @@ class DatasetService:
             try:
                 with Image.open(src_img) as raw_im:
                     orig_w, orig_h = raw_im.size
+                    color_mode = raw_im.mode
                     if orig_w > 0 and orig_h > 0:
                         ratio = orig_w / orig_h
                         if ratio > 1.6:
@@ -386,9 +397,11 @@ class DatasetService:
                         bg_color=(255, 255, 255)
                     )
                     fitted.save(dst_img, "PNG")
-            except Exception:
-                # Fallback for mock test data (e.g. dummy bytes in unit tests)
-                shutil.copy2(src_img, dst_img)
+            except Exception as exc:
+                # A copied corrupt image can look like a successful dataset
+                # export and waste a full training run.  Export is an integrity
+                # boundary, so fail before it can reach a trainer.
+                raise ValueError(f"Unreadable reference image '{src_img.name}': {exc}") from exc
 
             # Copy or write companion caption file
             shutil.copy2(src_txt, dst_txt)
@@ -402,8 +415,12 @@ class DatasetService:
 
             manifest_items.append({
                 "filename": src_img.name,
+                "source_sha256": DatasetService._sha256(src_img),
+                "export_sha256": DatasetService._sha256(dst_img),
+                "caption_sha256": DatasetService._sha256(dst_txt),
                 "original_width": orig_w,
                 "original_height": orig_h,
+                "original_mode": color_mode,
                 "original_aspect": aspect_str,
                 "fitted_width": target_resolution,
                 "fitted_height": target_resolution,
@@ -524,6 +541,14 @@ class DatasetService:
         for f in frames:
             src_img = Path(f["file_path"])
             dst_img = export_dir / src_img.name
+            try:
+                from PIL import Image
+                with Image.open(src_img) as image:
+                    image.verify()
+            except Exception as exc:
+                raise ValueError(f"Unreadable reference image '{src_img.name}': {exc}") from exc
+            if not str(f.get("caption", "")).strip():
+                raise ValueError(f"Reference image '{src_img.name}' has an empty caption.")
             shutil.copy2(src_img, dst_img)
 
             # ComfyUI JSONL format

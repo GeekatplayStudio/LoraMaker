@@ -143,6 +143,7 @@ class HardwareService:
 
         return {
             "backend": backend,
+            "cuda_available": cuda_available,
             "device_name": gpu_name,
             "total_vram_gb": total_vram_gb,
             "free_vram_gb": free_vram_gb,
@@ -170,3 +171,64 @@ class HardwareService:
                 "can_train_sdxl": can_train_sdxl
             }
         }
+
+    @classmethod
+    def get_auto_tuned_params(
+        cls,
+        base_model: str,
+        dataset_frame_count: int = 50,
+        desired_epochs: Optional[int] = None
+    ) -> Dict[str, Any]:
+        """
+        Calculates optimal, card-agnostic training hyperparameters dynamically
+        adapted to the detected GPU tier, VRAM, and dataset size.
+        """
+        hw = cls.get_hardware_profile()
+        vram = hw.get("total_vram_gb", 8.0)
+        is_ampere_plus = hw.get("supports_bf16", False)
+
+        if "flux" in base_model:
+            batch_size = 1
+            grad_accum = 1 if vram >= 23.0 else (2 if vram >= 16.0 else 4)
+            lr = 1e-4 if vram >= 16.0 else 8e-5
+            mixed_prec = "bf16" if is_ampere_plus else "fp16"
+            optimizer = "AdamW8bit" if vram < 24.0 else "AdamW"
+            rank = 16
+            alpha = 16
+        elif any(k in base_model for k in ["wan", "minimax", "ltx", "video"]):
+            batch_size = 1
+            grad_accum = 2 if vram >= 23.0 else 4
+            lr = 5e-5
+            mixed_prec = "bf16" if is_ampere_plus else "fp16"
+            optimizer = "AdamW8bit"
+            rank = 32
+            alpha = 32
+        else:
+            batch_size = 2 if vram >= 23.0 else 1
+            grad_accum = 1 if vram >= 16.0 else (2 if vram >= 10.0 else 4)
+            lr = 1e-4
+            mixed_prec = "bf16" if is_ampere_plus else "fp16"
+            optimizer = "AdamW8bit" if vram < 20.0 else "AdamW"
+            rank = 16
+            alpha = 16
+
+        target_steps = 1200
+        repeats = max(1, min(20, round(target_steps / max(1, dataset_frame_count * 10))))
+        epochs = desired_epochs or max(2, min(15, round(target_steps / max(1, dataset_frame_count * repeats))))
+
+        return {
+            "batch_size": batch_size,
+            "gradient_accumulation_steps": grad_accum,
+            "lora_rank": rank,
+            "lora_alpha": alpha,
+            "learning_rate": lr,
+            "optimizer_type": optimizer,
+            "mixed_precision": mixed_prec,
+            "gradient_checkpointing": True,
+            "recommended_repeats": repeats,
+            "recommended_epochs": epochs,
+            "target_total_steps": dataset_frame_count * repeats * epochs,
+            "vram_tier": hw.get("tier_name"),
+            "device_name": hw.get("device_name")
+        }
+
