@@ -62,6 +62,7 @@ Never squeeze or stretch your training subjects:
 ### 5. Multi-Architecture LoRA Training
 - **SDXL 1.0**: Native Kohya format with 640-dim and 1280-dim UNet cross-attention adapters.
 - **FLUX.1 [dev/schnell]**: 3072-dim single and double transformer DiT blocks.
+- **Qwen & Z-Image Support**: HuggingFace cache discovery and model auto-tuning.
 - **Video Diffusion**: Wan2.1, Hunyuan Video, Cosmos, LTX-Video spatiotemporal modules.
 - **Dual Mode**: Authentic PyTorch GPU gradient descent or dry-run validation.
 
@@ -72,6 +73,16 @@ Never squeeze or stretch your training subjects:
   - `0.85`: Standard balanced stylization.
   - `1.20+`: High-intensity artistic stylization.
 - **1-Click ComfyUI Deployment**: Instantly copy trained weights to ComfyUI `models/loras/`.
+
+### 7. Multi-Drive Storage & Visual Path Browser
+- **Drive Protection**: Redirect heavy base model downloads to external secondary drives (e.g., `O:\ComfyUI\models`) to keep `C:` drive clean.
+- **Multiple Search Roots**: Add and remove multiple model directories across `C:`, `D:`, `F:`, `O:`, etc.
+- **Visual Directory Browser**: Navigate folders interactively without manual typing.
+
+### 8. System Error & Diagnostics Telemetry Console
+- **Live Exception Tracking**: Captures Python stack traces, HTTP status, and request payloads.
+- **Context-Aware Suggestions**: Intelligent recommendations for missing checkpoints, uncaptioned frames, and VRAM limits.
+- **1-Click Diagnostic Report**: Copies a complete, formatted Markdown snapshot of system state and errors directly to the clipboard.
 
 ---
 
@@ -86,18 +97,32 @@ Never squeeze or stretch your training subjects:
    ```
 
 ### Quick Installation
+
+#### Windows (1-Click Automated Setup)
+1. Double-click **`install.bat`** (or run `.\install.ps1` in PowerShell). This automatically:
+   - Verifies Python 3.10+
+   - Creates and activates a dedicated virtual environment (`venv`)
+   - Detects your NVIDIA GPU and installs PyTorch with CUDA 12.4
+   - Installs all dependencies from `requirements.txt`
+2. Double-click **`start.bat`** (or run `.\start.ps1` in PowerShell) to launch the Studio and automatically open [http://127.0.0.1:7860](http://127.0.0.1:7860).
+
+#### Manual Setup
 ```bash
 # Clone the repository
 git clone https://github.com/GeekatplayStudio/LoraMaker.git
 cd LoraMaker
 
-# Install dependencies
+# Create & activate virtual environment
+python -m venv venv
+venv\Scripts\activate
+
+# Install PyTorch with CUDA 12.4 & dependencies
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
 pip install -r requirements.txt
 
-# Launch the application
+# Launch application
 python run_app.py
 ```
-On Windows, you can double-click **`start.bat`**.
 
 ---
 
@@ -109,14 +134,17 @@ LoraMaker/
 │   ├── agents/          # Multi-agent orchestrators (Supervisor, Visual, Story, Video)
 │   ├── api/             # FastAPI REST endpoints (Projects, Training, Evaluation, System)
 │   ├── core/            # Configuration and constants
-│   ├── services/        # Hardware auto-detection, video scrubbing, dataset formatting, training
+│   ├── services/        # Hardware auto-detection, video scrubbing, dataset formatting, training, diagnostics
 │   └── static/          # Modern Web UI (CSS glassmorphism, responsive JS controllers)
-├── docs/                # Architecture guide, user manual, and training references
-├── projects/            # Standard project directories (Auto-created on new project)
+├── projects/            # Project directories with Keyframes_Out and training datasets
 ├── tests/               # Automated test suite (Pytest)
+├── install.bat          # Automated Windows 1-click installer (venv + PyTorch CUDA + packages)
+├── start.bat            # Windows 1-click startup script (auto browser launch)
+├── install.ps1          # PowerShell automated installer
+├── start.ps1            # PowerShell launcher
 ├── run_app.py           # Application entrypoint launcher
-├── start.bat            # Windows 1-click startup script
-└── requirements.txt     # Python dependencies
+├── requirements.txt     # Python dependencies
+└── README.md            # Studio documentation
 ```
 
 ---
@@ -141,4 +169,3 @@ Official Repository: [https://github.com/GeekatplayStudio/LoraMaker.git](https:/
 ## 📄 License
 
 This project is licensed under the **MIT License**. See the [LICENSE](LICENSE) file for details.
->>>>>>> 13e8c96 (feat: brand to Geekatplay LoRA Maker v2.0 by Vladimir Chopine with hardware auto-detection, adaptive presets, and comprehensive test suite)

@@ -10,6 +10,7 @@ const AppState = {
     isPlaying: false,
     bestVisionModel: "qwen2.5vl:7b"
 };
+window.AppState = AppState;
 
 // Global helper: Show toast message
 function showToast(message, type = "info") {
@@ -19,14 +20,17 @@ function showToast(message, type = "info") {
     const toast = document.createElement("div");
     toast.className = "toast";
     const icon = type === "success" ? "✅" : (type === "error" ? "❌" : "✨");
-    toast.innerHTML = `<span>${icon}</span> <span>${message}</span>`;
+    const consoleBtn = type === "error"
+        ? `<button type="button" onclick="if(window.DiagnosticsConsole) DiagnosticsConsole.openModal();" style="background: rgba(239, 68, 68, 0.25); border: 1px solid rgba(239, 68, 68, 0.5); color: #fca5a5; padding: 3px 8px; border-radius: 4px; font-size: 0.72rem; cursor: pointer; margin-left: 8px; font-weight: 600; white-space: nowrap;">🔍 View Console</button>`
+        : '';
+    toast.innerHTML = `<span style="font-size: 1rem;">${icon}</span> <span style="flex: 1; word-break: break-word;">${message}</span>${consoleBtn}`;
     container.appendChild(toast);
 
     setTimeout(() => {
         toast.style.opacity = "0";
         toast.style.transform = "translateX(100%)";
         setTimeout(() => toast.remove(), 300);
-    }, 3500);
+    }, type === "error" ? 6500 : 3500);
 }
 
 // Navigation Tab Switcher

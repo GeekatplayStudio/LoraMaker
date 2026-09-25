@@ -280,24 +280,98 @@ const Training = {
         if (!AppState.projectDir) return showToast("Create or select a project first.", "error");
         const capability = this.capabilities.get(this.selectedModel);
         if (capability && capability.available === false) return showToast(capability.reason || "No matching local trainer is available.", "error");
+
+        if (window.DiagnosticsConsole) {
+            DiagnosticsConsole.clearInlineError('training-error-banner');
+            DiagnosticsConsole.clearInlineError('training-preflight-error-banner');
+        }
+
         const value = id => document.getElementById(id)?.value;
-        const payload = {project_dir: AppState.projectDir, base_model: this.selectedModel,
-            lora_rank: Number(value("train-rank-input")), lora_alpha: Number(value("train-alpha-input")),
-            learning_rate: Number(value("train-lr-input")), epochs: Number(value("train-epochs-input")),
-            repeats: Number(value("train-repeats-input")), batch_size: Number(value("train-batch-input")),
-            execution_mode: value("train-exec-mode"), framing_mode: value("train-framing-mode")};
+        const payload = {
+            project_dir: AppState.projectDir,
+            base_model: this.selectedModel,
+            lora_rank: Number(value("train-rank-input")),
+            lora_alpha: Number(value("train-alpha-input")),
+            learning_rate: Number(value("train-lr-input")),
+            epochs: Number(value("train-epochs-input")),
+            repeats: Number(value("train-repeats-input")),
+            batch_size: Number(value("train-batch-input")),
+            execution_mode: value("train-exec-mode"),
+            framing_mode: value("train-framing-mode")
+        };
         const button = document.getElementById("btn-start-training");
+        if (button) button.disabled = true;
+
+        let response;
         try {
-            if (button) button.disabled = true;
-            const response = await fetch("/api/training/start", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(payload)});
-            const data = await response.json();
-            if (!response.ok) throw new Error(data.detail || "Training preflight failed");
-            showToast(data.status === "validated" ? "Preflight passed; no weights were created." : "Real training started.", "success");
-            if (data.status === "started") this.startPollingStatus();
-            else if (button) button.disabled = false;
-        } catch (error) {
+            response = await fetch("/api/training/start", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload)
+            });
+        } catch (netErr) {
             if (button) button.disabled = false;
-            showToast(error.message, "error");
+            const netErrorObj = {
+                endpoint: "/api/training/start",
+                method: "POST",
+                status_code: 0,
+                error_type: "NetworkConnectionError",
+                message: "Network Error: Unable to connect to backend server at http://127.0.0.1:7860. The server process may have stopped or restarted.",
+                traceback: netErr.stack || String(netErr),
+                request_payload: payload,
+                suggestion: "Verify that the Python backend process is active on port 7860, or check the terminal log."
+            };
+            if (window.DiagnosticsConsole) {
+                DiagnosticsConsole.errors.unshift(netErrorObj);
+                DiagnosticsConsole.updateBadge();
+                DiagnosticsConsole.renderInlineError('training-error-banner', netErrorObj);
+                DiagnosticsConsole.renderInlineError('training-preflight-error-banner', netErrorObj);
+            }
+            showToast(netErrorObj.message, "error");
+            return;
+        }
+
+        let data;
+        try {
+            data = await response.json();
+        } catch (jsonErr) {
+            data = { detail: "Invalid non-JSON response returned from server" };
+        }
+
+        if (!response.ok) {
+            if (button) button.disabled = false;
+            let errDetail = data.detail || data;
+            let errMsg = typeof errDetail === 'string' ? errDetail : (errDetail.message || errDetail.detail || "Training preflight failed");
+            let errType = (typeof errDetail === 'object' && errDetail.error_type) ? errDetail.error_type : "TrainingPreflightError";
+            let tb = (typeof errDetail === 'object' && errDetail.traceback) ? errDetail.traceback : "";
+            let suggestion = (typeof errDetail === 'object' && errDetail.suggestion) ? errDetail.suggestion : "";
+
+            const errorRecord = {
+                endpoint: "/api/training/start",
+                method: "POST",
+                status_code: response.status,
+                error_type: errType,
+                message: errMsg,
+                traceback: tb,
+                request_payload: payload,
+                suggestion: suggestion
+            };
+
+            if (window.DiagnosticsConsole) {
+                DiagnosticsConsole.errors.unshift(errorRecord);
+                DiagnosticsConsole.updateBadge();
+                DiagnosticsConsole.renderInlineError('training-error-banner', errorRecord);
+                DiagnosticsConsole.renderInlineError('training-preflight-error-banner', errorRecord);
+            }
+            showToast(`${errType}: ${errMsg}`, "error");
+            return;
+        }
+
+        showToast(data.status === "validated" ? "Preflight passed; no weights were created." : "Real training started.", "success");
+        if (data.status === "started") {
+            this.startPollingStatus();
+        } else if (button) {
+            button.disabled = false;
         }
     },
 
@@ -349,7 +423,21 @@ const Training = {
                         this.loadLoRAVault();
                         this.loadDatasetManifest();
                     } else {
-                        showToast("LoRA Training Run encountered an issue.", "error");
+                        const failRecord = {
+                            endpoint: `/api/training/status?project_dir=${encodeURIComponent(AppState.projectDir)}`,
+                            method: "GET",
+                            status_code: 200,
+                            error_type: "TrainingExecutionError",
+                            message: data.error || "Training run encountered an execution error.",
+                            traceback: (data.log || []).slice(-20).join("\n"),
+                            suggestion: "Review the training log stream above or click 'Copy Diagnostic Report' for full context."
+                        };
+                        if (window.DiagnosticsConsole) {
+                            DiagnosticsConsole.errors.unshift(failRecord);
+                            DiagnosticsConsole.updateBadge();
+                            DiagnosticsConsole.renderInlineError('training-error-banner', failRecord);
+                        }
+                        showToast("LoRA Training Run encountered an issue. See Diagnostics Console for details.", "error");
                     }
                 }
             } catch (e) {

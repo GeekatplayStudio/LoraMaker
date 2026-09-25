@@ -190,3 +190,23 @@ def browse_fs_get(path: Optional[str] = None):
 def browse_fs_post(req: BrowseDirectoryRequest):
     """Interactive server-side directory navigator (POST variant)."""
     return SettingsService.browse_filesystem(req.path)
+
+
+from app.services.diagnostics_service import DiagnosticsService
+
+@router.get("/diagnostics")
+def get_diagnostics():
+    """Retrieve complete system diagnostic snapshot, hardware telemetry, and recent error traces."""
+    return DiagnosticsService.get_diagnostics_report()
+
+@router.get("/logs")
+def get_system_logs(limit: int = 150):
+    """Retrieve live in-memory server and engine log buffer."""
+    return {"logs": DiagnosticsService.get_recent_logs(limit=limit)}
+
+@router.post("/diagnostics/clear")
+def clear_diagnostics_errors():
+    """Clear recorded error history."""
+    DiagnosticsService.clear_errors()
+    return {"success": True, "message": "Diagnostics error history cleared."}
+

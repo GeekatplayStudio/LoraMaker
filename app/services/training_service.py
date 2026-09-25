@@ -68,6 +68,7 @@ class TrainingService:
         "minimax-video": {
             "name": "MiniMax / Hunyuan Video 720p",
             "category": "video",
+            "network_module": "networks.lora",
             "checkpoints": (
                 "D:/ComfyUI/ComfyUI/models/diffusion_models/hunyuan_video_t2v_720p_bf16.safetensors",
                 "D:/ComfyUI/models/diffusion_models/hunyuan_video_t2v_720p_bf16.safetensors",
@@ -86,6 +87,7 @@ class TrainingService:
         "wan-2.1-t2v": {
             "name": "Wan 2.1 Video T2V",
             "category": "video",
+            "network_module": "networks.lora",
             "checkpoints": (
                 "D:/ComfyUI/ComfyUI/models/diffusion_models/wan2.1_t2v_14B_fp8.safetensors",
                 "D:/ComfyUI/ComfyUI/models/diffusion_models/wan2.1_t2v_1.3B_bf16.safetensors",
@@ -95,6 +97,7 @@ class TrainingService:
         "ltx-video-turbo": {
             "name": "LTX-Video 2.5 Turbo",
             "category": "video",
+            "network_module": "networks.lora",
             "checkpoints": (
                 "D:/ComfyUI/ComfyUI/models/checkpoints/ltx-video-2b-v0.9.1.safetensors",
                 "D:/ComfyUI/models/checkpoints/ltx-video-2b-v0.9.1.safetensors",
@@ -103,6 +106,7 @@ class TrainingService:
         "qwen-image": {
             "name": "Qwen2.5-VL / Qwen-Image",
             "category": "image",
+            "network_module": "networks.lora",
             "checkpoints": (
                 "D:/ComfyUI/ComfyUI/models/checkpoints/qwen2.5-vl-7b.safetensors",
                 "Qwen/Qwen2.5-VL-7B-Instruct",
@@ -111,6 +115,7 @@ class TrainingService:
         "z-image": {
             "name": "Z-Image DiT",
             "category": "image",
+            "network_module": "networks.lora",
             "checkpoints": (
                 "D:/ComfyUI/ComfyUI/models/checkpoints/z-image-dit.safetensors",
                 "Tongyi-MAI/Z-Image",
@@ -323,9 +328,13 @@ class TrainingService:
         epochs: int,
         batch: int,
     ) -> List[str]:
+        script_file = backend.get("script")
+        if not script_file:
+            script_file = Path(__file__).resolve().parent / "diffusers_lora_worker.py"
+        network_mod = backend.get("spec", {}).get("network_module", "networks.lora")
         cmd = [
             sys.executable,
-            str(backend["script"]),
+            str(script_file),
             f"--pretrained_model_name_or_path={backend['checkpoint']}",
             f"--train_data_dir={image_dir}",
             f"--output_dir={output_dir}",
@@ -334,7 +343,7 @@ class TrainingService:
             "--resolution=1024,1024",
             f"--network_dim={rank}",
             f"--network_alpha={alpha}",
-            f"--network_module={backend['spec']['network_module']}",
+            f"--network_module={network_mod}",
             "--network_train_unet_only",
             f"--learning_rate={lr}",
             "--optimizer_type=AdamW8bit",
@@ -394,9 +403,16 @@ class TrainingService:
         if min(lora_rank, lora_alpha, epochs, repeats, batch_size) < 1 or learning_rate <= 0:
             raise ValueError("training parameters must be positive")
         p = Path(project_dir).resolve()
+        if not p.exists():
+            raise ValueError(f"Project directory '{project_dir}' does not exist. Please select an existing project or create a new one.")
         dataset = DatasetService.get_project_dataset(str(p))
-        if dataset["total_count"] < 2 or dataset["captioned_count"] != dataset["total_count"]:
-            raise ValueError("Real training requires at least two valid, fully captioned keyframes.")
+        if dataset["total_count"] == 0:
+            raise ValueError(f"Project '{p.name}' has no keyframe images in Keyframes_Out. Real training requires at least two valid, fully captioned keyframes.")
+        if dataset["total_count"] < 2:
+            raise ValueError(f"Project '{p.name}' only has {dataset['total_count']} keyframe. Real training requires at least two valid, fully captioned keyframes.")
+        if dataset["captioned_count"] < dataset["total_count"]:
+            missing = dataset["total_count"] - dataset["captioned_count"]
+            raise ValueError(f"Project '{p.name}' has {missing} uncaptioned keyframe(s) out of {dataset['total_count']}. Real training requires at least two valid, fully captioned keyframes.")
 
         from PIL import Image
         valid_images = 0
@@ -410,7 +426,7 @@ class TrainingService:
             except Exception:
                 continue
         if valid_images < 2:
-            raise ValueError("Real training requires at least two valid, fully captioned keyframes.")
+            raise ValueError("Corrupted or unreadable images detected. Real training requires at least two valid, fully captioned keyframes.")
 
         backend = cls._backend(base_model)
         exported = DatasetService.export_for_kohya(

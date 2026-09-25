@@ -46,8 +46,12 @@
       <select id="project-selector" class="form-select" style="max-width: 220px; padding: 6px 12px; font-size: 0.82rem;">
         <option value="">Loading Projects...</option>
       </select>
-            <button class="btn-secondary" id="btn-open-settings" style="padding: 6px 12px; font-size: 0.82rem; display: flex; align-items: center; gap: 6px;" title="Configure model directories, download paths, and drive storage">
+      <button class="btn-secondary" id="btn-open-settings" style="padding: 6px 12px; font-size: 0.82rem; display: flex; align-items: center; gap: 6px;" title="Configure model directories, download paths, and drive storage">
         <span>⚙️</span> Storage & Paths
+      </button>
+      <button class="btn-secondary" id="btn-open-console" onclick="DiagnosticsConsole.openModal()" style="padding: 6px 12px; font-size: 0.82rem; display: flex; align-items: center; gap: 6px; border-color: rgba(239, 68, 68, 0.4);" title="Open Error & Diagnostics Console to view logs, tracebacks, and copy reports">
+        <span>🖥️</span> Logs & Errors
+        <span id="console-error-badge" class="error-badge" style="display: none; background: #ef4444; color: #fff; border-radius: 999px; padding: 1px 6px; font-size: 0.7rem; font-weight: 700;">0</span>
       </button>
       <button class="btn-primary" id="btn-new-project" style="padding: 6px 12px; font-size: 0.82rem;">
         + New Project
@@ -403,6 +407,9 @@ Select a preset or ask me anything to get started!
             <div style="color: var(--text-dim); font-size: 0.85rem;">Click below to audit dataset readiness.</div>
           </div>
 
+          <!-- Preflight Error Banner -->
+          <div id="training-preflight-error-banner" style="display: none;"></div>
+
           <div style="display: flex; gap: 10px;">
             <button class="btn-secondary" id="btn-audit-dataset" style="flex: 1;">
               🔍 Audit Dataset Readiness
@@ -416,6 +423,9 @@ Select a preset or ask me anything to get started!
         <!-- Right: Live Training Monitor & Loss Logs -->
         <div class="glass-panel" style="padding: 24px; display: flex; flex-direction: column; gap: 16px;">
           <h2 class="panel-title">📊 Live Training Telemetry</h2>
+
+          <!-- Inline Error & Diagnostics Banner -->
+          <div id="training-error-banner" style="display: none;"></div>
 
           <div style="display: flex; justify-content: space-between; align-items: center;">
             <span id="training-status-text" class="mono" style="color: var(--cyan-accent); font-weight: 600;">Status: IDLE</span>
@@ -1130,11 +1140,78 @@ Select a preset or ask me anything to get started!
     </div>
   </div>
 
+  <!-- Diagnostics & Error Telemetry Console Modal -->
+  <div class="modal-overlay" id="diagnostics-console-modal">
+    <div class="modal-card glass-panel" style="max-width: 860px; width: 94%; max-height: 90vh; display: flex; flex-direction: column; overflow: hidden; padding: 22px;">
+      
+      <!-- Modal Header -->
+      <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); padding-bottom: 12px; margin-bottom: 14px;">
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <span style="font-size: 1.4rem;">🖥️</span>
+          <div>
+            <h3 style="margin: 0; font-size: 1.15rem; color: #fff;">System Error & Diagnostics Console</h3>
+            <div style="font-size: 0.75rem; color: var(--text-dim);">Live error tracking, Python tracebacks, engine telemetry, and 1-click clipboard diagnostic reports</div>
+          </div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <button class="btn-primary" onclick="DiagnosticsConsole.copyDiagnosticReport()" style="padding: 6px 14px; font-size: 0.8rem; background: var(--amber-primary); color: #000; font-weight: 700;" title="Copy complete diagnostic report with Python traceback, specs, and server logs">
+            📋 Copy Full Diagnostic Report
+          </button>
+          <button type="button" onclick="DiagnosticsConsole.closeModal()" style="background: none; border: none; font-size: 1.4rem; color: var(--text-dim); cursor: pointer;">&times;</button>
+        </div>
+      </div>
+
+      <!-- Navigation Tabs inside Console -->
+      <div style="display: flex; gap: 8px; border-bottom: 1px solid var(--border-color); margin-bottom: 14px; align-items: center; justify-content: space-between;">
+        <div style="display: flex; gap: 4px;">
+          <button class="diag-tab-btn active" data-tab="errors" onclick="DiagnosticsConsole.switchTab('errors')">
+            ⚠️ Recorded Errors
+          </button>
+          <button class="diag-tab-btn" data-tab="logs" onclick="DiagnosticsConsole.switchTab('logs')">
+            📜 Server & Engine Logs
+          </button>
+          <button class="diag-tab-btn" data-tab="system" onclick="DiagnosticsConsole.switchTab('system')">
+            ⚙️ Hardware & Environment Health
+          </button>
+        </div>
+        <div style="display: flex; gap: 6px;">
+          <button class="btn-ghost" onclick="DiagnosticsConsole.fetchDiagnostics(true)" style="padding: 4px 8px; font-size: 0.75rem;" title="Refresh data">🔄 Refresh</button>
+          <button class="btn-ghost" onclick="DiagnosticsConsole.clearErrors()" style="padding: 4px 8px; font-size: 0.75rem; color: #f87171;" title="Clear errors">🗑️ Clear</button>
+        </div>
+      </div>
+
+      <!-- Tab Content 1: Errors List -->
+      <div class="diag-tab-content" id="diag-panel-errors" style="flex: 1; overflow-y: auto; padding-right: 4px;">
+        <div id="diag-errors-list"></div>
+      </div>
+
+      <!-- Tab Content 2: Server Logs Stream -->
+      <div class="diag-tab-content" id="diag-panel-logs" style="flex: 1; display: none; overflow: hidden; flex-direction: column;">
+        <div class="log-viewer mono" id="diag-logs-viewer" style="height: 440px; overflow-y: auto; background: #06080e; font-size: 0.78rem; padding: 12px; border-radius: 6px; border: 1px solid var(--border-color);"></div>
+      </div>
+
+      <!-- Tab Content 3: System Specs -->
+      <div class="diag-tab-content" id="diag-panel-system" style="flex: 1; display: none; overflow-y: auto; padding-right: 4px;">
+        <div id="diag-system-container"></div>
+      </div>
+
+      <!-- Modal Footer -->
+      <div style="display: flex; justify-content: space-between; align-items: center; border-top: 1px solid var(--border-color); padding-top: 12px; margin-top: 12px;">
+        <div style="font-size: 0.75rem; color: var(--text-dim);">
+          Geekatplay Studio Universal AI LoRA Maker • Vladimir Chopine
+        </div>
+        <button type="button" class="btn-secondary" onclick="DiagnosticsConsole.closeModal()" style="font-size: 0.8rem; padding: 6px 14px;">Close</button>
+      </div>
+
+    </div>
+  </div>
+
   <!-- Toast Container -->
   <div class="toast-container" id="toast-container"></div>
 
   <!-- Client-side Scripts -->
   <script src="/static/js/app.js"></script>
+  <script src="/static/js/console.js"></script>
   <script src="/static/js/scrubber.js"></script>
   <script src="/static/js/gallery.js"></script>
   <script src="/static/js/supervisor.js"></script>

@@ -68,7 +68,30 @@ def start_training(req: StartTrainingRequest):
         )
 
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        import traceback
+        from app.services.diagnostics_service import DiagnosticsService
+        tb = traceback.format_exc()
+        payload = req.model_dump()
+        rec = DiagnosticsService.record_error(
+            endpoint="/api/training/start",
+            method="POST",
+            error=e,
+            traceback_str=tb,
+            payload=payload,
+            status_code=400,
+        )
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": str(e),
+                "error_type": type(e).__name__,
+                "detail": f"{type(e).__name__}: {str(e)}",
+                "traceback": tb,
+                "endpoint": "/api/training/start",
+                "request_payload": payload,
+                "suggestion": rec.get("suggestion", "Check server logs or diagnostics report."),
+            }
+        )
 
 @router.get("/status")
 def get_training_status(project_dir: str = Query(...)):
