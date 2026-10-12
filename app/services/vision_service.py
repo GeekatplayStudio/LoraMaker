@@ -1,5 +1,3 @@
-import os
-import base64
 import logging
 from pathlib import Path
 from typing import List, Dict, Any, Optional
@@ -29,7 +27,6 @@ class VisionService:
                 name = getattr(m, "model", None) or m.get("model") or getattr(m, "name", None) or m.get("name")
                 size = getattr(m, "size", 0) or m.get("size", 0)
                 modified_at = getattr(m, "modified_at", "") or m.get("modified_at", "")
-                details = getattr(m, "details", {}) or m.get("details", {})
                 
                 # Check if it has vision capabilities
                 is_vision = cls._is_vision_model(name)

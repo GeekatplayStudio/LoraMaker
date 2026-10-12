@@ -95,13 +95,19 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
         }
     )
 
-# Enable CORS for local desktop usage
+# CORS: the API can read, write and delete user files and launch trainer
+# processes, so only the Studio's own local origins may call it from a browser.
+LOCAL_ORIGINS = [
+    f"http://{host}:{port}"
+    for host in ("127.0.0.1", "localhost")
+    for port in {settings.PORT, 7860}
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=LOCAL_ORIGINS,
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_headers=["Content-Type"],
 )
 
 # Include API Routers

@@ -20,7 +20,6 @@ import logging
 import hashlib
 import os
 import re
-import shutil
 import subprocess
 import sys
 import threading
@@ -38,9 +37,13 @@ ENGINE_DIFFUSERS = "Diffusers/PEFT"
 
 
 class TrainingService:
+    # Job state is written by the worker thread and read by request threads;
+    # every access goes through _lock and get_job_status returns a snapshot.
+    _lock = threading.RLock()
     _active_jobs: Dict[str, Dict[str, Any]] = {}
     _active_procs: Dict[str, Any] = {}
     _bnb_cache: Dict[str, bool] = {}
+    _LOG_LINES = 300
     _TRAINERS = {
         "sdxl-1.0": {
             "name": "SDXL 1.0 (Stable Diffusion XL)",
@@ -629,6 +632,10 @@ class TrainingService:
         p = Path(project_dir).resolve()
         if not p.exists():
             raise ValueError(f"Project directory '{project_dir}' does not exist. Please select an existing project or create a new one.")
+        with cls._lock:
+            running = cls._active_jobs.get(str(p))
+            if running and running.get("status") == "running" and execution_mode == "real_gpu":
+                raise ValueError(f"A training run is already in progress for '{p.name}'. Stop it before starting another.")
         dataset = DatasetService.get_project_dataset(str(p))
         if dataset["total_count"] == 0:
             raise ValueError(f"Project '{p.name}' has no keyframe images in Keyframes_Out. Real training requires at least two valid, fully captioned keyframes.")
@@ -712,7 +719,7 @@ class TrainingService:
             ),
             encoding="utf-8",
         )
-        job = cls._active_jobs[str(p)] = {
+        job = {
             "status": "running",
             "execution_mode": "validate_only" if execution_mode == "dry_run" else execution_mode,
             "base_model": base_model,
@@ -737,6 +744,18 @@ class TrainingService:
                 f"Engine: {backend['engine']} | preset: {plan['preset_name']} | {plan['max_train_steps']} steps @ {plan['resolution']}px, rank {plan['lora_rank']}, {plan['optimizer_type']}, {plan['mixed_precision']}",
             ],
         }
+        with cls._lock:
+            cls._active_jobs[str(p)] = job
+
+        def update(**fields):
+            with cls._lock:
+                job.update(fields)
+
+        def log(line: str):
+            with cls._lock:
+                job["log"].append(line)
+                if len(job["log"]) > cls._LOG_LINES:
+                    del job["log"][: len(job["log"]) - cls._LOG_LINES]
         config = cls.generate_kohya_toml_config(
             str(p), base_model, plan["lora_rank"], plan["lora_alpha"], plan["learning_rate"],
             plan["epochs"], plan["batch_size"], plan["resolution"],
@@ -745,8 +764,8 @@ class TrainingService:
         handoff = cls.generate_comfyui_workflow(str(p), base_model, plan["lora_rank"], plan["lora_alpha"])
 
         if execution_mode in {"validate_only", "dry_run"}:
-            job.update({"status": "validated", "progress_percent": 100.0})
-            job["log"].append("Validation complete; no model weights were created.")
+            update(status="validated", progress_percent=100.0)
+            log("Validation complete; no model weights were created.")
             return {
                 "status": "validated",
                 "execution_mode": "validate_only",
@@ -768,7 +787,7 @@ class TrainingService:
 
         def worker():
             started = time.time()
-            all_lines = []
+            all_lines: List[str] = []
             try:
                 env = os.environ.copy()
                 env.update({"PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1", "TF_ENABLE_ONEDNN_OPTS": "0",
@@ -777,48 +796,25 @@ class TrainingService:
                     command,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
-                    text=True,
-                    encoding="utf-8",
-                    errors="replace",
                     cwd=cwd_dir,
                     env=env,
                 )
-                cls._active_procs[str(p)] = proc
-                job["pid"] = proc.pid
+                with cls._lock:
+                    cls._active_procs[str(p)] = proc
+                    job["pid"] = proc.pid
                 pattern = re.compile(r"(\d+)/(\d+).*?(?:avr_loss|loss)[=:\s]+([0-9.]+)", re.I)
                 fixed_pattern = re.compile(r"fixed_batch_loss_before=([0-9.]+)\s+fixed_batch_loss_after=([0-9.]+)")
-                learning = {}
-
-                def stream_chunks(pipe):
-                    buf = ""
-                    while True:
-                        chunk = pipe.read(64)
-                        if not chunk:
-                            if buf.strip():
-                                yield buf.strip()
-                            break
-                        buf += chunk
-                        while "\r" in buf or "\n" in buf:
-                            idx_r = buf.find("\r")
-                            idx_n = buf.find("\n")
-                            if idx_r != -1 and (idx_n == -1 or idx_r < idx_n):
-                                split_idx = idx_r
-                            else:
-                                split_idx = idx_n
-                            line = buf[:split_idx].strip()
-                            buf = buf[split_idx + 1:]
-                            if line:
-                                yield line
-
+                learning: Dict[str, Any] = {}
                 first_step_at = None
-                for line in stream_chunks(proc.stdout):
+
+                for line in cls._iter_lines(proc.stdout):
                     all_lines.append(line)
                     fixed = fixed_pattern.search(line)
                     if fixed:
                         before, after = float(fixed.group(1)), float(fixed.group(2))
                         learning = {"fixed_batch_loss_before": before, "fixed_batch_loss_after": after,
                                     "learning_verified": after < before}
-                        job["learning"] = learning
+                        update(learning=learning)
                     found = pattern.search(line)
                     if found and not fixed:
                         step, total, loss = int(found.group(1)), int(found.group(2)), float(found.group(3))
@@ -826,25 +822,31 @@ class TrainingService:
                         if first_step_at is None:
                             first_step_at = now
                         rate = (step - 1) / (now - first_step_at) if step > 1 and now > first_step_at else None
-                        job.update({
-                            "current_step": step,
-                            "total_steps": total,
-                            "current_loss": loss,
-                            "telemetry_verified": True,
-                            "progress_percent": round(100 * step / max(total, 1), 1),
-                            "eta_seconds": round((total - step) / rate) if rate else None,
-                        })
-                        job["loss_history"].append({"step": step, "loss": loss})
+                        with cls._lock:
+                            job.update({
+                                "current_step": step,
+                                "total_steps": total,
+                                "current_loss": loss,
+                                "telemetry_verified": True,
+                                "progress_percent": round(100 * step / max(total, 1), 1),
+                                "eta_seconds": round((total - step) / rate) if rate else None,
+                            })
+                            job["loss_history"].append({"step": step, "loss": loss})
                     if len(line) < 500:
-                        job["log"].append(line)
-                        if len(job["log"]) > 300:
-                            job["log"] = job["log"][-300:]
+                        log(line)
                 proc.wait()
+                with cls._lock:
+                    was_stopped = job.get("status") == "stopped"
+                if was_stopped:
+                    return
                 if proc.returncode != 0:
                     err_lines = [l for l in all_lines if any(k in l.lower() for k in ("error", "exception", "failed", "found:", "cuda out of memory", "no module named"))]
                     detail = err_lines[-1] if err_lines else (all_lines[-1] if all_lines else f"Exited with code {proc.returncode}")
                     raise RuntimeError(f"Trainer exited with code {proc.returncode}: {detail}")
                 verification = cls._verify(target, base_model)
+                with cls._lock:
+                    loss_history = list(job["loss_history"])
+                    current_step, current_loss = job["current_step"], job["current_loss"]
                 metrics = {
                     "schema": "lora-maker-training-metrics-v1",
                     "verified": True,
@@ -860,37 +862,28 @@ class TrainingService:
                     "command_sha256": cls._sha256(command_file),
                     "exit_code": proc.returncode,
                     "output_sha256": cls._sha256(target),
-                    "total_steps": job["current_step"],
-                    "loss_history": job["loss_history"],
-                    "initial_loss": job["loss_history"][0]["loss"] if job["loss_history"] else None,
-                    "final_loss": job["current_loss"],
+                    "total_steps": current_step,
+                    "loss_history": loss_history,
+                    "initial_loss": loss_history[0]["loss"] if loss_history else None,
+                    "final_loss": current_loss,
                     "duration_seconds": round(time.time() - started, 1),
                     "output_size_mb": round(target.stat().st_size / 1024**2, 2),
                     "verification": verification,
                     **learning,
                 }
                 target.with_suffix(".metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
-                job.update({
-                    "status": "completed",
-                    "progress_percent": 100.0,
-                    "artifact_verified": True,
-                    "verification": verification,
-                    "duration_seconds": metrics["duration_seconds"],
-                })
-                job["log"].append(
-                    f"Completed in {metrics['duration_seconds']}s: {verification['adapter_pairs']} adapter pairs, "
-                    f"{verification['nonzero_up_tensors']} trained up-tensors verified."
-                )
+                update(status="completed", progress_percent=100.0, artifact_verified=True,
+                       verification=verification, duration_seconds=metrics["duration_seconds"])
+                log(f"Completed in {metrics['duration_seconds']}s: {verification['adapter_pairs']} adapter pairs, "
+                    f"{verification['nonzero_up_tensors']} trained up-tensors verified.")
                 if learning:
-                    job["log"].append(
-                        f"Learning check: fixed-batch loss {learning['fixed_batch_loss_before']:.4f} -> "
-                        f"{learning['fixed_batch_loss_after']:.4f} ({'improved' if learning['learning_verified'] else 'no improvement'})."
-                    )
+                    log(f"Learning check: fixed-batch loss {learning['fixed_batch_loss_before']:.4f} -> "
+                        f"{learning['fixed_batch_loss_after']:.4f} ({'improved' if learning['learning_verified'] else 'no improvement'}).")
             except Exception as exc:
                 logger.exception("Real LoRA training failed")
                 err_str = str(exc)
-                job.update({"status": "failed", "error": err_str})
-                job["log"].append(f"Training failed: {err_str}")
+                update(status="failed", error=err_str)
+                log(f"Training failed: {err_str}")
                 try:
                     from app.services.diagnostics_service import DiagnosticsService
                     DiagnosticsService.record_error(
@@ -904,7 +897,8 @@ class TrainingService:
                 except Exception:
                     pass
             finally:
-                cls._active_procs.pop(str(p), None)
+                with cls._lock:
+                    cls._active_procs.pop(str(p), None)
 
         threading.Thread(target=worker, daemon=True).start()
         return {
@@ -920,28 +914,68 @@ class TrainingService:
             "target_output": str(target),
         }
 
+    @staticmethod
+    def _iter_lines(pipe):
+        """Yield lines from a byte pipe, treating both '\\n' and tqdm's '\\r' as terminators.
+
+        Reads whatever bytes are available instead of waiting for a fixed chunk,
+        so sparse trainer output reaches the UI immediately.
+        """
+        import codecs
+        decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+        buf = ""
+        while True:
+            chunk = os.read(pipe.fileno(), 4096)
+            if not chunk:
+                tail = (buf + decoder.decode(b"", final=True)).strip()
+                if tail:
+                    yield tail
+                return
+            buf += decoder.decode(chunk)
+            while True:
+                idx_r, idx_n = buf.find("\r"), buf.find("\n")
+                candidates = [i for i in (idx_r, idx_n) if i != -1]
+                if not candidates:
+                    break
+                cut = min(candidates)
+                line, buf = buf[:cut].strip(), buf[cut + 1:]
+                if line:
+                    yield line
+
+    _IDLE_STATUS = {
+        "status": "idle",
+        "progress_percent": 0.0,
+        "current_step": 0,
+        "total_steps": 0,
+        "current_loss": None,
+        "loss_history": [],
+        "telemetry_verified": False,
+        "log": [],
+    }
+
     @classmethod
     def get_job_status(cls, project_dir: str) -> Dict[str, Any]:
-        return cls._active_jobs.get(
-            str(Path(project_dir).resolve()),
-            {
-                "status": "idle",
-                "progress_percent": 0.0,
-                "current_step": 0,
-                "total_steps": 0,
-                "current_loss": None,
-                "loss_history": [],
-                "telemetry_verified": False,
-                "log": [],
-            },
-        )
+        """Return a deep-enough copy so JSON encoding never races the worker thread."""
+        with cls._lock:
+            job = cls._active_jobs.get(str(Path(project_dir).resolve()))
+            if job is None:
+                return json.loads(json.dumps(cls._IDLE_STATUS))
+            snapshot = dict(job)
+            snapshot["log"] = list(job["log"])
+            snapshot["loss_history"] = list(job["loss_history"])
+            return snapshot
 
     @classmethod
     def stop_training(cls, project_dir: str) -> Dict[str, Any]:
         p = Path(project_dir).resolve()
         key = str(p)
-        proc = cls._active_procs.get(key)
-        job = cls._active_jobs.get(key)
+        with cls._lock:
+            proc = cls._active_procs.get(key)
+            job = cls._active_jobs.get(key)
+            if job and job.get("status") == "running":
+                # Mark first so the worker thread reports "stopped", not "failed".
+                job.update({"status": "stopped", "progress_percent": 0.0})
+                job["log"].append("Training manually stopped by user request.")
         if proc and proc.poll() is None:
             try:
                 proc.terminate()
@@ -951,8 +985,6 @@ class TrainingService:
                     proc.kill()
                 except Exception:
                     pass
-        cls._active_procs.pop(key, None)
-        if job:
-            job.update({"status": "stopped", "progress_percent": 0.0})
-            job["log"].append("Training manually stopped by user request.")
+        with cls._lock:
+            cls._active_procs.pop(key, None)
         return {"status": "stopped", "project_dir": str(p)}

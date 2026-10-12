@@ -184,10 +184,43 @@ const Gallery = {
                 })
             });
             const data = await res.json();
-            showToast(`Batch completed: captioned ${data.processed_count} frames!`, "success");
-            this.refresh();
+            if (!res.ok) throw new Error(data.detail || data.message || "request rejected");
+            if (data.status === "completed") {
+                showToast(data.message || `Batch completed: captioned ${data.processed_count} frames.`, "success");
+                this.refresh();
+                return;
+            }
+            showToast(data.message || `Captioning ${data.total} frames in the background...`, "info");
+            await this.pollBatchStatus();
         } catch (e) {
             showToast("Batch captioning failed: " + e.message, "error");
+        }
+    },
+
+    async pollBatchStatus() {
+        const url = `/api/captions/batch/status?project_dir=${encodeURIComponent(AppState.projectDir)}`;
+        let lastSeen = -1;
+        while (true) {
+            await new Promise(r => setTimeout(r, 2000));
+            let st;
+            try {
+                st = await (await fetch(url)).json();
+            } catch (e) {
+                continue;
+            }
+            if (st.processed_count !== lastSeen) {
+                lastSeen = st.processed_count;
+                this.refresh();
+            }
+            if (st.status !== "running") {
+                const failed = st.failed_count || 0;
+                showToast(failed
+                    ? `Batch finished: ${st.processed_count - failed} captioned, ${failed} failed (Ollama unavailable?).`
+                    : `Batch completed: captioned ${st.processed_count} frames.`,
+                    failed ? "error" : "success");
+                this.refresh();
+                return;
+            }
         }
     },
 

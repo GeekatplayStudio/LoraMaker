@@ -70,10 +70,29 @@ class EvaluationService:
             return {"verified": False, "reason": "Artifact content does not match its training provenance."}
         return {"verified": True, "data": data}
 
+    # (path, size, mtime, metrics mtime) -> truth.  Verification hashes the whole
+    # file and samples tensors; the vault and evaluation tabs call it on every
+    # refresh, so results are memoised until the file or its provenance changes.
+    _truth_cache: Dict[str, tuple] = {}
+
     @classmethod
     def _artifact_truth(cls, model_file: Path) -> Dict[str, Any]:
         if not model_file.is_file():
             return {"verified": False, "reason": "Model file not found."}
+        stat = model_file.stat()
+        metrics = model_file.with_suffix(".metrics.json")
+        m_mtime = metrics.stat().st_mtime if metrics.is_file() else None
+        key = str(model_file.resolve())
+        signature = (stat.st_size, stat.st_mtime, m_mtime)
+        cached = cls._truth_cache.get(key)
+        if cached and cached[0] == signature:
+            return dict(cached[1])
+        result = cls._compute_artifact_truth(model_file)
+        cls._truth_cache[key] = (signature, result)
+        return dict(result)
+
+    @classmethod
+    def _compute_artifact_truth(cls, model_file: Path) -> Dict[str, Any]:
 
         # Without provenance, a file under 500KB is treated as a legacy dummy
         # stub.  With verified provenance the real tensor checks below decide.
@@ -668,9 +687,6 @@ class EvaluationService:
         """
         import base64
         from io import BytesIO
-        from PIL import Image, ImageDraw
-        import numpy as np
-        from app.services.dataset_service import DatasetService
 
         p_dir = Path(project_dir)
         test_renders_dir = p_dir / "Training" / "test_renders"

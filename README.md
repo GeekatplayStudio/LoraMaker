@@ -85,6 +85,15 @@ pytest tests/test_training_e2e.py  # full pipeline on CPU: trains, verifies, loa
 
 Every run also records a **learning check**: the loss on a fixed batch is measured before and after training and stored in `<model>.metrics.json` as `fixed_batch_loss_before/after`. The end-to-end test asserts that it drops, that the adapter changes the UNet output, and that scale 0 reproduces the base model.
 
+### Engineering safeguards
+- **Local-only API**: CORS is restricted to the Studio's own `127.0.0.1` / `localhost` origins, so other pages in your browser cannot drive the API.
+- **File endpoints are typed and scoped**: image/video serving only returns media files, caption edits and frame deletes only touch files inside a Studio project, and uploads are renamed to a safe basename.
+- **One training run per project**: a second start is refused while a run is active; a user stop is reported as *stopped*, never *failed*.
+- **Non-blocking telemetry**: trainer output is read byte-wise, so sparse log lines and tqdm `\r` updates appear immediately.
+- **Background batch captioning**: `POST /api/captions/batch` returns at once; progress comes from `GET /api/captions/batch/status`.
+- **Caching**: settings and LoRA verification results are memoised until the underlying files change.
+- **CI**: GitHub Actions runs the full suite on Python 3.11 and 3.12, including the real CPU training end-to-end test.
+
 ### No simulations policy
 Nothing in the Studio fabricates a result. Concretely:
 - Training telemetry comes only from the trainer's stdout; the UI shows "telemetry not verified" otherwise.

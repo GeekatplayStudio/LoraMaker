@@ -19,10 +19,31 @@ logger = logging.getLogger(__name__)
 
 class SettingsService:
     SETTINGS_FILE = settings.BASE_DIR / "user_settings.json"
+    # get_user_settings probes every drive with disk_usage; callers such as
+    # checkpoint discovery invoke it dozens of times per request.  A short TTL
+    # cache keeps that cheap; saves invalidate it.
+    _CACHE_TTL_SECONDS = 2.0
+    _cache: Optional[Dict[str, Any]] = None
+    _cache_at: float = 0.0
+
+    @classmethod
+    def invalidate_cache(cls) -> None:
+        cls._cache = None
+        cls._cache_at = 0.0
 
     @classmethod
     def get_user_settings(cls) -> Dict[str, Any]:
-        """Loads persisted user settings or returns intelligent defaults."""
+        """Loads persisted user settings or returns intelligent defaults (cached briefly)."""
+        import time
+        now = time.monotonic()
+        if cls._cache is not None and now - cls._cache_at < cls._CACHE_TTL_SECONDS:
+            return dict(cls._cache)
+        result = cls._load_user_settings()
+        cls._cache, cls._cache_at = result, now
+        return dict(result)
+
+    @classmethod
+    def _load_user_settings(cls) -> Dict[str, Any]:
         data = {}
         if cls.SETTINGS_FILE.exists():
             try:
@@ -170,6 +191,7 @@ class SettingsService:
 
         # Persist to JSON
         cls.SETTINGS_FILE.write_text(json.dumps(updated, indent=2), encoding="utf-8")
+        cls.invalidate_cache()
         logger.info(f"User settings persisted to {cls.SETTINGS_FILE}. Download cache set to {dl_path}.")
 
         return cls.get_user_settings()

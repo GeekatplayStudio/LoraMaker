@@ -128,6 +128,7 @@ def main():
     logger.info("Base model: %s", args.pretrained_model_name_or_path)
 
     try:
+        import numpy as np
         import torch
         import torch.nn.functional as F
         from PIL import Image
@@ -210,7 +211,7 @@ def main():
             with Image.open(path) as im:
                 im = fit_image(im.convert("RGB"), resolution)
             w, h = im.size
-            arr = torch.from_numpy(__import__("numpy").asarray(im).copy()).permute(2, 0, 1).float() / 127.5 - 1.0
+            arr = torch.from_numpy(np.asarray(im).copy()).permute(2, 0, 1).float() / 127.5 - 1.0
             lat = vae.encode(arr.unsqueeze(0).to(device)).latent_dist.sample() * vae.config.scaling_factor
             latent_cache.append({
                 "latent": lat.squeeze(0).to("cpu", torch.float32),
