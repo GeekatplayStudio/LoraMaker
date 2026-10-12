@@ -251,3 +251,23 @@ def test_batch_caption_runs_in_background_and_reports_failures(temp_project_dir,
     (kf / "z_1.txt").write_text("zorb, manual", encoding="utf-8")
     res = client.post("/api/captions/batch", json={"project_dir": temp_project_dir})
     assert res.json()["status"] == "completed" and res.json()["total"] == 0
+
+
+@pytest.mark.skipif(os.name == "nt", reason="drive-letter paths are real paths on Windows")
+def test_saving_settings_never_creates_drive_folders_on_posix(tmp_path, monkeypatch):
+    """'D:/ComfyUI/...' is a relative path off Windows; it must not be created or used as a cache."""
+    monkeypatch.chdir(tmp_path)
+    before = {k: os.environ.get(k) for k in ("HF_HOME", "HUGGINGFACE_HUB_CACHE", "TORCH_HOME")}
+    result = SettingsService.save_user_settings({
+        "DOWNLOAD_DIR": "D:/ComfyUI/ComfyUI/models",
+        "MODELS_DIR": "D:/ComfyUI/ComfyUI/models",
+    })
+    assert not (tmp_path / "D:").exists()
+    assert list(tmp_path.iterdir()) == []
+    assert {k: os.environ.get(k) for k in before} == before
+    assert result["DOWNLOAD_DIR"] == "D:/ComfyUI/ComfyUI/models"
+
+    real = tmp_path / "models"
+    SettingsService.save_user_settings({"DOWNLOAD_DIR": str(real)})
+    assert (real / "huggingface" / "hub").is_dir()
+    assert os.environ["HF_HOME"] == str(real.resolve() / "huggingface")

@@ -21,6 +21,9 @@ from __future__ import annotations
 import math
 from typing import Any, Dict, List, Optional
 
+# ``estimated_minutes`` are planning estimates per GPU tier, NOT measured
+# benchmarks.  The live ETA shown during a run is computed from the real step
+# rate instead.
 # Hard preset table.  ``steps`` is the optimizer-step budget.  ``epochs`` is the
 # number of passes used to derive per-image repeats (and the number of save
 # points the trainer will produce when it supports epoch saves).

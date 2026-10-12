@@ -62,3 +62,34 @@ def mock_external_heavy_services(monkeypatch):
     monkeypatch.setattr(StoryAgent, "_get_best_llm_model", classmethod(lambda cls, *args, **kwargs: None))
 
 
+
+
+_CACHE_ENV_VARS = ("HF_HOME", "HUGGINGFACE_HUB_CACHE", "TORCH_HOME")
+_SETTINGS_ATTRS = ("COMFYUI_ROOT", "KOHYA_ROOT", "KOHYA_FALLBACK_ROOT", "OLLAMA_HOST")
+
+
+@pytest.fixture(autouse=True)
+def isolate_user_settings(monkeypatch, tmp_path_factory):
+    """No test may touch the real user_settings.json, global settings, or cache env vars.
+
+    SettingsService.save_user_settings mutates all three; without isolation a
+    single test would redirect the Hugging Face cache and leak state into every
+    test that runs afterwards.
+    """
+    from app.core.config import settings
+    from app.services.settings_service import SettingsService
+
+    sandbox = tmp_path_factory.mktemp("user_settings")
+    monkeypatch.setattr(SettingsService, "SETTINGS_FILE", sandbox / "user_settings.json")
+    saved_env = {name: os.environ.get(name) for name in _CACHE_ENV_VARS}
+    saved_attrs = {name: getattr(settings, name) for name in _SETTINGS_ATTRS}
+    SettingsService.invalidate_cache()
+    yield
+    for name, value in saved_env.items():
+        if value is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = value
+    for name, value in saved_attrs.items():
+        setattr(settings, name, value)
+    SettingsService.invalidate_cache()

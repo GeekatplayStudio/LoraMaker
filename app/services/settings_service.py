@@ -8,6 +8,7 @@ to user-specified folders to prevent C: drive exhaustion and duplicate downloads
 """
 
 import os
+import re
 import json
 import shutil
 import logging
@@ -16,6 +17,24 @@ from typing import Dict, Any, List, Optional
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+_DRIVE_PATH = re.compile(r"^[A-Za-z]:[\\/]")
+
+
+def _is_foreign_drive_path(raw: Any) -> bool:
+    """True for ``D:/...`` style paths on a non-Windows host.
+
+    On POSIX such a string is a *relative* path, so resolving or creating it
+    would silently build a ``D:`` folder inside the current directory.
+    """
+    return os.name != "nt" and bool(_DRIVE_PATH.match(str(raw or "")))
+
+
+def _normalise_path(raw: Any) -> str:
+    """Resolve a configured path unless it only makes sense on another OS."""
+    text = str(raw)
+    return text if _is_foreign_drive_path(text) else str(Path(text).resolve())
+
 
 class SettingsService:
     SETTINGS_FILE = settings.BASE_DIR / "user_settings.json"
@@ -157,31 +176,32 @@ class SettingsService:
                     clean_extra.append(val)
 
         updated = {
-            "COMFYUI_ROOT": str(Path(new_settings.get("COMFYUI_ROOT", current["COMFYUI_ROOT"])).resolve()),
-            "MODELS_DIR": str(Path(new_settings.get("MODELS_DIR", current["MODELS_DIR"])).resolve()),
+            "COMFYUI_ROOT": _normalise_path(new_settings.get("COMFYUI_ROOT", current["COMFYUI_ROOT"])),
+            "MODELS_DIR": _normalise_path(new_settings.get("MODELS_DIR", current["MODELS_DIR"])),
             "EXTRA_MODEL_PATHS": clean_extra,
-            "DOWNLOAD_DIR": str(Path(new_settings.get("DOWNLOAD_DIR", current["DOWNLOAD_DIR"])).resolve()),
-            "KOHYA_ROOT": str(Path(new_settings.get("KOHYA_ROOT", current["KOHYA_ROOT"])).resolve()),
-            "KOHYA_FALLBACK_ROOT": str(Path(new_settings.get("KOHYA_FALLBACK_ROOT", current["KOHYA_FALLBACK_ROOT"])).resolve()),
+            "DOWNLOAD_DIR": _normalise_path(new_settings.get("DOWNLOAD_DIR", current["DOWNLOAD_DIR"])),
+            "KOHYA_ROOT": _normalise_path(new_settings.get("KOHYA_ROOT", current["KOHYA_ROOT"])),
+            "KOHYA_FALLBACK_ROOT": _normalise_path(new_settings.get("KOHYA_FALLBACK_ROOT", current["KOHYA_FALLBACK_ROOT"])),
             "OLLAMA_HOST": str(new_settings.get("OLLAMA_HOST", current["OLLAMA_HOST"])).strip(),
         }
 
-        # Create download dir if missing
+        # Create the download dir and redirect HuggingFace/Torch caches to it, but
+        # only when it is a real location on this OS (see _is_foreign_drive_path).
         dl_path = Path(updated["DOWNLOAD_DIR"])
-        try:
-            dl_path.mkdir(parents=True, exist_ok=True)
-        except Exception as e:
-            logger.warning(f"Could not create download dir {dl_path}: {e}")
-
-        # Protect C: drive by directing HuggingFace and Torch caches to user-specified download dir
-        hf_cache = dl_path / "huggingface" / "hub"
-        hf_cache.mkdir(parents=True, exist_ok=True)
-        torch_cache = dl_path / "torch"
-        torch_cache.mkdir(parents=True, exist_ok=True)
-
-        os.environ["HF_HOME"] = str(dl_path / "huggingface")
-        os.environ["HUGGINGFACE_HUB_CACHE"] = str(hf_cache)
-        os.environ["TORCH_HOME"] = str(torch_cache)
+        if _is_foreign_drive_path(updated["DOWNLOAD_DIR"]):
+            logger.info("DOWNLOAD_DIR %s is a Windows drive path; skipping cache redirection on this OS.", dl_path)
+        else:
+            try:
+                dl_path.mkdir(parents=True, exist_ok=True)
+                hf_cache = dl_path / "huggingface" / "hub"
+                hf_cache.mkdir(parents=True, exist_ok=True)
+                torch_cache = dl_path / "torch"
+                torch_cache.mkdir(parents=True, exist_ok=True)
+                os.environ["HF_HOME"] = str(dl_path / "huggingface")
+                os.environ["HUGGINGFACE_HUB_CACHE"] = str(hf_cache)
+                os.environ["TORCH_HOME"] = str(torch_cache)
+            except OSError as e:
+                logger.warning(f"Could not prepare download dir {dl_path}: {e}")
 
         # Update in-memory AppSettings
         settings.COMFYUI_ROOT = Path(updated["COMFYUI_ROOT"])
