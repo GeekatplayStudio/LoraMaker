@@ -43,4 +43,5 @@ def test_suggest_keyframe_candidates(sample_video_path):
     for c in candidates:
         assert "frame_index" in c
         assert "timestamp" in c
-        assert "suggested_pose" in c
+        assert 0.0 <= c["change_score"] <= 1.0
+        assert "reason" in c

@@ -141,20 +141,23 @@ class SupervisorAgent:
         if "model" in msg_lower or "support" in msg_lower or "wan" in msg_lower or "flux" in msg_lower or "ollama" in msg_lower:
             models_info = cls.get_available_models()
             best_v = models_info["best_vision_model"]
+            caps = models_info["training_capabilities"]
+            avail = [a for a in caps["architectures"] if a["available"]]
+            unavail = [a for a in caps["architectures"] if not a["available"]]
+            lines = [f"Welcome to the Model Vault, Director! 🎬\n",
+                     f"✨ **Vision captioner (Ollama)**: `{best_v}`\n",
+                     f"🖥️ **GPU**: {caps.get('device')} ({caps.get('vram_gb')} GB, {caps.get('tier_name')})\n"]
+            if avail:
+                lines.append("✅ **Ready to train right now**:")
+                lines += [f"- **{a['name']}** via {a['engine']}" for a in avail]
+            else:
+                lines.append("⚠️ No architecture is trainable yet on this machine.")
+            if unavail:
+                lines.append("\n⛔ **Not available** (missing weights or trainer):")
+                lines += [f"- {a['name']}: {'; '.join(a['missing_requirements'])}" for a in unavail]
+            lines.append("\nPresets: Smoke test (20 steps) → Fast character (400) → Balanced (900) → Quality (1600).")
             return {
-                "reply": (
-                    f"Welcome to the Model Vault, Director! 🎬\n\n"
-                    f"✨ **Active Vision Scanner (Ollama)**: `{best_v}` is primed and ready to caption your cel frame scans with rich LoRA triggers.\n\n"
-                    f"🎨 **Visual Image LoRAs Supported**:\n"
-                    f"- **FLUX.1 [dev]**: Highest fidelity for intricate ink linework & expressive character designs.\n"
-                    f"- **Qwen Image (DiT / Qwen2.5-VL)**: Alibaba multimodal vision transformer with unmatched prompt compliance & character identity.\n"
-                    f"- **Z-Image DiT**: High-resolution stylized cel linework and rubber-hose character adapter.\n"
-                    f"- **SDXL 1.0**: Perfect vintage 1930s rubber-hose cel aesthetics and high flexibility.\n\n"
-                    f"🎞️ **Video Motion LoRAs Supported**:\n"
-                    f"- **Wan2.1 (Video Diffusion)**: Outstanding 24fps motion brushes & dynamic camera panning.\n"
-                    f"- **LTX-Video**: Lightning-fast 2-4 second motion clip generation.\n"
-                    f"- **MiniMax / HunyuanVideo**: High cinematic cartoon physics and motion diffusion."
-                ),
+                "reply": "\n".join(lines),
                 "tool_called": "get_available_models",
                 "data": models_info
             }
@@ -250,12 +253,15 @@ class SupervisorAgent:
 
         # Fallback interactive LLM chat via Ollama if available
         try:
+            llm_model = StoryAgent._get_best_llm_model()
+            if not llm_model:
+                raise RuntimeError("no local LLM")
             client = ollama.Client(host=settings.OLLAMA_HOST, timeout=12)
             messages = [
                 {"role": "system", "content": SUPERVISOR_SYSTEM_PROMPT},
                 {"role": "user", "content": user_message}
             ]
-            res = client.chat(model="qwen2.5-coder:14b", messages=messages)
+            res = client.chat(model=llm_model, messages=messages)
             content = res.get("message", {}).get("content", "")
             if content:
                 return {"reply": content, "tool_called": "llm_chat"}

@@ -39,7 +39,7 @@ class TrainerAgent:
 
         if is_ready:
             recommendations.append("Dataset is fully captioned and ready for training!")
-            recommendations.append("Estimated training time on RTX 3090: ~8 to 15 minutes for 1000 steps.")
+            recommendations.append("Start with the 'Smoke test' preset (20 steps) to confirm the trainer, then 'Fast character' (~400 steps). The preset badge shows the time estimate for your GPU tier.")
 
         return {
             "is_ready_for_training": is_ready,

@@ -142,20 +142,17 @@ class VisionService:
                 "image_file": str(img_p)
             }
         except Exception as e:
+            # Never write a made-up caption: a wrong caption silently poisons the
+            # LoRA.  Report the failure and leave the frame uncaptioned so the
+            # training preflight blocks it.
             logger.error(f"Error calling Ollama vision model {active_model}: {e}")
-            # Fallback high quality heuristic caption so workflow never breaks
-            fallback_caption = (
-                f"{trigger_token}, {style_token}, vintage animated character cel frame, "
-                f"crisp monochrome ink linework, rubber hose animation style, "
-                f"retro cartoon character pose, high contrast keyframe scan"
-            )
-            txt_path = cls.save_caption_file(str(img_p), fallback_caption)
             return {
                 "success": False,
-                "warning": f"Ollama generation fallback ({str(e)})",
+                "error": f"Ollama vision captioning failed with model '{active_model}': {e}",
+                "suggestion": f"Start Ollama and run `ollama pull {active_model}`, or caption this frame manually.",
                 "model_used": active_model,
-                "caption": fallback_caption,
-                "caption_file": str(txt_path),
+                "caption": None,
+                "caption_file": None,
                 "image_file": str(img_p)
             }
 

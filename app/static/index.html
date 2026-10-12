@@ -299,7 +299,7 @@ Select a preset or ask me anything to get started!
 
             <div class="model-selection-cards" style="max-height: 280px; overflow-y: auto; padding-right: 4px;">
               <!-- Image Models -->
-              <div class="model-card selected" data-model-id="flux-1-dev" data-category="image">
+              <div class="model-card" data-model-id="flux-1-dev" data-category="image">
                 <div class="model-card-title"><span>FLUX.1 [dev]</span> <span class="model-card-cat">Image</span></div>
                 <div class="model-card-desc">12B Rectified Flow model. State of the art for detailed vintage ink illustrations.</div>
               </div>
@@ -315,7 +315,7 @@ Select a preset or ask me anything to get started!
                 <div class="model-card-title"><span>Z-Image DiT</span> <span class="model-card-cat" style="color: #38bdf8;">Image</span></div>
                 <div class="model-card-desc">High-fidelity stylized cel & rubber-hose diffusion transformer architecture.</div>
               </div>
-              <div class="model-card" data-model-id="sdxl-1.0" data-category="image">
+              <div class="model-card selected" data-model-id="sdxl-1.0" data-category="image">
                 <div class="model-card-title"><span>SDXL 1.0</span> <span class="model-card-cat">Image</span></div>
                 <div class="model-card-desc">Classic base model with high compatibility for rubber-hose & cel animation.</div>
               </div>
@@ -348,7 +348,22 @@ Select a preset or ask me anything to get started!
             </div>
           </div>
 
-                    <!-- Auto-Tune Notification Badge -->
+          <!-- Training Preset Selector -->
+          <div class="form-group">
+            <label class="form-label" for="train-preset">⚡ Training Preset (step-budgeted, hardware-aware)</label>
+            <select id="train-preset" class="form-select" style="border-color: var(--amber-primary);">
+              <option value="smoke_test">🧪 Smoke test – 20 real steps, proves training works (~2 min)</option>
+              <option value="fast" selected>🚀 Fast character – 768px, rank 8, ~400 steps</option>
+              <option value="balanced">⚖️ Balanced – 1024px, rank 16, ~900 steps</option>
+              <option value="quality">💎 Quality – 1024px, rank 32, ~1600 steps</option>
+              <option value="custom">🛠️ Custom – use the fields below</option>
+            </select>
+            <small style="color: var(--text-dim); font-size: 0.76rem;">
+              Presets cache latents, train the UNet only, and cap the number of optimizer steps so run time is predictable. Run the Smoke test first on a new machine.
+            </small>
+          </div>
+
+          <!-- Auto-Tune Notification Badge -->
           <div id="auto-tune-badge" style="display: none; padding: 8px 14px; background: rgba(56, 189, 248, 0.12); border: 1px solid rgba(56, 189, 248, 0.4); border-radius: 8px; color: #38bdf8; font-size: 0.82rem; margin-bottom: 14px;"></div>
 
           <!-- Hyperparameters -->
@@ -377,17 +392,25 @@ Select a preset or ask me anything to get started!
               <label class="form-label" for="train-batch-input">Batch Size</label>
               <input type="number" id="train-batch-input" class="form-input mono" value="1" />
             </div>
+            <div class="form-group">
+              <label class="form-label" for="train-resolution-input">Resolution (px)</label>
+              <input type="number" id="train-resolution-input" class="form-input mono" value="768" step="64" />
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="train-steps-input">Max Train Steps</label>
+              <input type="number" id="train-steps-input" class="form-input mono" value="400" />
+            </div>
           </div>
 
           <!-- Execution Mode Selector -->
           <div class="form-group">
             <label class="form-label" for="train-exec-mode">Training Engine & Execution Mode</label>
             <select id="train-exec-mode" class="form-select" style="border-color: var(--amber-primary);">
-              <option value="real_gpu">🔥 Real Kohya GPU Training (verified adapter output)</option>
+              <option value="real_gpu">🔥 Real GPU Training (Kohya sd-scripts if installed, else built-in Diffusers/PEFT)</option>
               <option value="validate_only">⚡ Validate prerequisites only (creates no weights)</option>
             </select>
             <small style="color: var(--text-dim); font-size: 0.76rem;">
-              Real mode launches only a matching installed Kohya trainer. Validation mode never creates model weights.
+              Real mode runs genuine gradient descent and verifies the saved adapter. Validation mode never creates model weights.
             </small>
           <!-- Aspect Ratio & Framing Strategy -->
           <div class="form-group">

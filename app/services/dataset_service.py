@@ -339,9 +339,13 @@ class DatasetService:
         concept_folder_name = f"{repeats}_{trigger} {class_token}".strip()
         concept_dir = img_root / concept_folder_name
 
-        # Clean and recreate concept dir
-        if concept_dir.exists():
-            shutil.rmtree(concept_dir)
+        # Remove every previous concept export, not just the one with the same
+        # repeats value.  Leftover "10_token character" folders next to a new
+        # "4_token character" folder silently double the dataset and the run time.
+        if img_root.exists():
+            for stale in img_root.iterdir():
+                if stale.is_dir():
+                    shutil.rmtree(stale, ignore_errors=True)
         concept_dir.mkdir(parents=True, exist_ok=True)
 
         exported_count = 0

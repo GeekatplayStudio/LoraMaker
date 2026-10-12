@@ -42,8 +42,14 @@ class StoryAgent:
             except Exception as e:
                 logger.warning(f"Ollama story generation failed ({e}), using curated screenplay template.")
 
-        if not script:
+        if script:
+            script["source"] = "ollama_llm"
+            script["generated_by"] = llm_model
+        else:
             script = cls._build_curated_script(character_name, premise, num_scenes, style_preset)
+            script["source"] = "template"
+            script["generated_by"] = None
+            script["notice"] = "No local Ollama LLM responded; this is a genre template, not a generated screenplay."
 
         return script
 

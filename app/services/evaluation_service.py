@@ -26,6 +26,17 @@ class EvaluationService:
                 digest.update(chunk)
         return digest.hexdigest()
 
+    @staticmethod
+    def comfyui_lora_dir() -> Path:
+        """ComfyUI models/loras from settings (COMFYUI_ROOT), with the legacy D: fallback."""
+        from app.core.config import settings
+        root = Path(settings.COMFYUI_ROOT)
+        for cand in (root / "models" / "loras", root / "loras"):
+            if cand.exists():
+                return cand
+        legacy = Path("D:/ComfyUI/ComfyUI/models/loras")
+        return legacy if legacy.exists() else root / "models" / "loras"
+
     @classmethod
     def get_output_dir(cls, project_dir: str) -> Path:
         """Returns the Training/output directory for a project."""
@@ -64,9 +75,11 @@ class EvaluationService:
         if not model_file.is_file():
             return {"verified": False, "reason": "Model file not found."}
 
-        # Check size: if smaller than 500KB, it's definitely a legacy dummy stub
+        # Without provenance, a file under 500KB is treated as a legacy dummy
+        # stub.  With verified provenance the real tensor checks below decide.
         stat = model_file.stat()
-        if stat.st_size < 500 * 1024:
+        has_provenance = cls._verified_metrics(model_file)["verified"]
+        if stat.st_size < 500 * 1024 and not has_provenance:
             return {
                 "verified": False,
                 "reason": "Legacy mock stub (< 1 MB). Launch a training run to generate real weights.",
@@ -86,6 +99,24 @@ class EvaluationService:
         pairs = sum(k.endswith(".lora_down.weight") or ".lora_A." in k or ".down." in k for k in keys)
         if pairs < 10 and len(keys) < 20:
             return {"verified": False, "reason": "Artifact lacks sufficient LoRA adapter tensor pairs."}
+
+        # Trained adapters have non-zero up/B matrices (they start at zero and
+        # only gradient descent changes them).  Header structure alone is not
+        # evidence of training.
+        try:
+            import torch
+            up_keys = [k for k in keys if k.endswith(".lora_up.weight") or ".lora_B." in k or k.endswith(".up.weight")]
+            sample = up_keys[: min(len(up_keys), 64)]
+            nonzero = 0
+            with safe_open(str(model_file), framework="pt", device="cpu") as handle:
+                for k in sample:
+                    t = handle.get_tensor(k).float()
+                    if torch.isfinite(t).all() and float(t.abs().sum()) > 0:
+                        nonzero += 1
+            if sample and nonzero < max(1, len(sample) // 2):
+                return {"verified": False, "reason": f"Adapter is untrained: {nonzero}/{len(sample)} up-projection tensors are non-zero.", "is_stub": True}
+        except Exception as exc:
+            return {"verified": False, "reason": f"Could not inspect adapter tensors: {exc}"}
 
         # Check for sidecar provenance or derive from safetensors header metadata
         metrics_provenance = cls._verified_metrics(model_file)
@@ -296,8 +327,9 @@ class EvaluationService:
             if metrics_path.exists():
                 try:
                     m_data = json.loads(metrics_path.read_text(encoding="utf-8"))
-                    inferred_rank = m_data.get("lora_rank", inferred_rank)
-                    inferred_alpha = m_data.get("lora_alpha", inferred_alpha)
+                    plan = m_data.get("plan") or {}
+                    inferred_rank = plan.get("lora_rank", m_data.get("lora_rank", inferred_rank))
+                    inferred_alpha = plan.get("lora_alpha", m_data.get("lora_alpha", inferred_alpha))
                 except Exception:
                     pass
 
@@ -335,7 +367,7 @@ class EvaluationService:
                 health_grade = "LOW_DELTA"
 
             # Check ComfyUI installation readiness
-            comfy_lora_dir = Path("D:/ComfyUI/ComfyUI/models/loras")
+            comfy_lora_dir = cls.comfyui_lora_dir()
             comfy_deployed = (comfy_lora_dir / model_file.name).exists() if comfy_lora_dir.exists() else False
 
             return {
@@ -356,7 +388,7 @@ class EvaluationService:
                 "delta_weight_magnitude": avg_delta_magnitude,
                 "health_status": health_status,
                 "health_grade": health_grade,
-                "comfyui_ready": True,
+                "comfyui_ready": comfy_lora_dir.exists(),
                 "comfyui_deployed": comfy_deployed,
                 "comfyui_path": str((comfy_lora_dir / model_file.name).resolve()) if comfy_lora_dir.exists() else None,
                 "tensors": tensors_info[:12], # Top 12 tensors summary
@@ -781,7 +813,7 @@ class EvaluationService:
         """
         out_dir = cls.get_output_dir(project_dir)
         p_dir = Path(project_dir)
-        comfy_lora_dir = Path("D:/ComfyUI/ComfyUI/models/loras")
+        comfy_lora_dir = cls.comfyui_lora_dir()
 
         if not comfy_lora_dir.exists():
             return {

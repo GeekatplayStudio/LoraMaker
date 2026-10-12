@@ -8,13 +8,19 @@ router = APIRouter(prefix="/api/training", tags=["Training"])
 
 class StartTrainingRequest(BaseModel):
     project_dir: str
-    base_model: str = "flux-1-dev"
-    lora_rank: int = 16
-    lora_alpha: int = 16
-    epochs: int = 5
-    repeats: int = 10
-    batch_size: int = 1
-    learning_rate: float = 1e-4
+    base_model: str = "sdxl-1.0"
+    # "smoke_test" | "fast" | "balanced" | "quality" | "custom"
+    preset: str = "fast"
+    # Optional overrides; None means "use the preset value".
+    lora_rank: Optional[int] = None
+    lora_alpha: Optional[int] = None
+    learning_rate: Optional[float] = None
+    resolution: Optional[int] = None
+    max_train_steps: Optional[int] = None
+    batch_size: Optional[int] = None
+    # Legacy fields, only used by the "custom" preset.
+    epochs: Optional[int] = None
+    repeats: Optional[int] = None
     execution_mode: str = "real_gpu"
     framing_mode: str = "bucket"
 
@@ -22,6 +28,22 @@ class StartTrainingRequest(BaseModel):
 def get_training_capabilities():
     """Return only locally verified trainer/model combinations."""
     return TrainingService.get_training_capabilities()
+
+@router.get("/presets")
+def get_training_presets(
+    project_dir: Optional[str] = Query(None),
+    base_model: str = Query("sdxl-1.0"),
+):
+    """Preset catalogue plus the resolved plan for each preset on this GPU/dataset."""
+    from app.services.training_presets import list_presets, DEFAULT_PRESET
+    presets = list_presets()
+    if project_dir:
+        for item in presets:
+            try:
+                item["plan"] = TrainingService.get_preset_plan(project_dir, base_model, item["id"])
+            except Exception as exc:
+                item["plan_error"] = str(exc)
+    return {"default_preset": DEFAULT_PRESET, "presets": presets}
 
 @router.get("/audit")
 def audit_dataset(project_dir: str = Query(...)):
@@ -64,7 +86,10 @@ def start_training(req: StartTrainingRequest):
             batch_size=req.batch_size,
             learning_rate=req.learning_rate,
             execution_mode=req.execution_mode,
-            framing_mode=req.framing_mode
+            framing_mode=req.framing_mode,
+            preset=req.preset,
+            resolution=req.resolution,
+            max_train_steps=req.max_train_steps,
         )
 
     except Exception as e:

@@ -1,6 +1,6 @@
 // LoRA Training Pipeline Controller
 const Training = {
-    selectedModel: "flux-1-dev",
+    selectedModel: "sdxl-1.0",
     pollInterval: null,
     capabilities: new Map(),
 
@@ -77,6 +77,7 @@ const Training = {
         });
 
         document.getElementById("btn-start-training")?.addEventListener("click", () => this.startTraining());
+        document.getElementById("train-preset")?.addEventListener("change", () => this.applyPreset());
         document.getElementById("btn-audit-dataset")?.addEventListener("click", () => this.audit());
         document.getElementById("btn-refresh-manifest")?.addEventListener("click", () => this.loadDatasetManifest());
         document.getElementById("btn-refresh-vault")?.addEventListener("click", () => this.loadLoRAVault());
@@ -93,13 +94,30 @@ const Training = {
             const data = await response.json();
             [...(data.architectures || []), ...(data.unavailable_architectures || [])].forEach(item => this.capabilities.set(item.id, item));
             document.querySelectorAll(".model-card").forEach(card => {
-                const capability = this.capabilities.get(card.getAttribute("data-model-id"));
-                if (capability && capability.available === false) {
+                const id = card.getAttribute("data-model-id");
+                let capability = this.capabilities.get(id);
+                if (!capability) {
+                    capability = { id, available: false, reason: "No trainer integration exists for this architecture yet." };
+                    this.capabilities.set(id, capability);
+                }
+                if (capability.available === false) {
                     card.style.opacity = "0.45";
                     card.title = capability.reason || (capability.missing_requirements || []).join(", ");
                     card.setAttribute("aria-disabled", "true");
+                    card.classList.remove("selected");
+                } else if (capability.engine) {
+                    card.title = `Trainer: ${capability.engine}`;
                 }
             });
+            const current = this.capabilities.get(this.selectedModel);
+            if (!current || current.available === false) {
+                const firstOk = [...this.capabilities.values()].find(c => c.available);
+                if (firstOk) {
+                    this.selectedModel = firstOk.id;
+                    document.querySelector(`.model-card[data-model-id="${firstOk.id}"]`)?.classList.add("selected");
+                    this.loadModelProfile(firstOk.id);
+                }
+            }
         } catch (error) {
             console.warn("Training capability check failed", error);
         }
@@ -263,32 +281,64 @@ const Training = {
         ctx.fillText(minLoss.toFixed(2), paddingLeft - 5, h - paddingBottom);
     },
 
+    currentPreset() {
+        return document.getElementById("train-preset")?.value || "fast";
+    },
+
+    setFieldsLocked(locked) {
+        ["train-rank-input", "train-alpha-input", "train-lr-input", "train-epochs-input",
+         "train-repeats-input", "train-batch-input", "train-resolution-input", "train-steps-input"]
+            .forEach(id => { const el = document.getElementById(id); if (el) el.readOnly = locked; });
+    },
+
     async loadModelProfile(modelId) {
+        return this.applyPreset(modelId);
+    },
+
+    // Fill the hyperparameter fields from the resolved preset plan (hardware
+    // tier + dataset size aware).  "custom" unlocks the fields.
+    async applyPreset(modelId) {
+        const preset = this.currentPreset();
+        const badge = document.getElementById("auto-tune-badge");
+        if (preset === "custom") {
+            this.setFieldsLocked(false);
+            if (badge) {
+                badge.innerHTML = "🛠️ <strong>Custom</strong>: the fields below are sent as-is. Max Train Steps caps the run.";
+                badge.style.display = "block";
+            }
+            return;
+        }
         if (!AppState.projectDir) return;
         try {
-            const res = await fetch(`/api/training/auto_tune?project_dir=${encodeURIComponent(AppState.projectDir)}&base_model=${encodeURIComponent(modelId)}`);
+            const model = modelId || this.selectedModel;
+            const res = await fetch(`/api/training/presets?project_dir=${encodeURIComponent(AppState.projectDir)}&base_model=${encodeURIComponent(model)}`);
             if (!res.ok) return;
-            const params = await res.json();
+            const data = await res.json();
+            const entry = (data.presets || []).find(p => p.id === preset);
+            const plan = entry && entry.plan;
+            if (!plan) return;
 
             const setVal = (id, val) => {
                 const el = document.getElementById(id);
-                if (el && val !== undefined) el.value = val;
+                if (el && val !== undefined && val !== null) el.value = val;
             };
+            setVal("train-rank-input", plan.lora_rank);
+            setVal("train-alpha-input", plan.lora_alpha);
+            setVal("train-lr-input", plan.learning_rate);
+            setVal("train-epochs-input", plan.epochs);
+            setVal("train-repeats-input", plan.repeats);
+            setVal("train-batch-input", plan.batch_size);
+            setVal("train-resolution-input", plan.resolution);
+            setVal("train-steps-input", plan.max_train_steps);
+            this.setFieldsLocked(true);
 
-            setVal("train-rank-input", params.lora_rank);
-            setVal("train-alpha-input", params.lora_alpha);
-            setVal("train-lr-input", params.learning_rate);
-            setVal("train-epochs-input", params.recommended_epochs);
-            setVal("train-repeats-input", params.recommended_repeats);
-            setVal("train-batch-input", params.batch_size);
-
-            const badge = document.getElementById("auto-tune-badge");
             if (badge) {
-                badge.innerHTML = `⚡ <strong>Hardware Auto-Tuned</strong> for ${params.device_name || 'GPU'} (${params.vram_tier}): Batch=${params.batch_size}, LR=${params.learning_rate}, ${params.target_total_steps} target steps (${params.recommended_epochs} epochs × ${params.recommended_repeats} repeats).`;
+                const eta = plan.estimated_minutes ? ` ≈ ${plan.estimated_minutes} min` : "";
+                badge.innerHTML = `⚡ <strong>${entry.name}</strong> on ${plan.device_name || 'GPU'} (${plan.vram_tier}): ${plan.max_train_steps} steps @ ${plan.resolution}px, rank ${plan.lora_rank}/${plan.lora_alpha}, ${plan.optimizer_type}, ${plan.mixed_precision}, ${plan.dataset_frame_count} images × ${plan.repeats} repeats${eta}.`;
                 badge.style.display = "block";
             }
         } catch (e) {
-            console.warn("Auto-tune error:", e);
+            console.warn("Preset plan error:", e);
         }
     },
 
@@ -303,18 +353,27 @@ const Training = {
         }
 
         const value = id => document.getElementById(id)?.value;
+        const num = id => { const v = Number(value(id)); return Number.isFinite(v) && v > 0 ? v : null; };
+        const preset = this.currentPreset();
         const payload = {
             project_dir: AppState.projectDir,
             base_model: this.selectedModel,
-            lora_rank: Number(value("train-rank-input")),
-            lora_alpha: Number(value("train-alpha-input")),
-            learning_rate: Number(value("train-lr-input")),
-            epochs: Number(value("train-epochs-input")),
-            repeats: Number(value("train-repeats-input")),
-            batch_size: Number(value("train-batch-input")),
+            preset: preset,
             execution_mode: value("train-exec-mode"),
             framing_mode: value("train-framing-mode")
         };
+        if (preset === "custom") {
+            Object.assign(payload, {
+                lora_rank: num("train-rank-input"),
+                lora_alpha: num("train-alpha-input"),
+                learning_rate: num("train-lr-input"),
+                epochs: num("train-epochs-input"),
+                repeats: num("train-repeats-input"),
+                batch_size: num("train-batch-input"),
+                resolution: num("train-resolution-input"),
+                max_train_steps: num("train-steps-input")
+            });
+        }
         const button = document.getElementById("btn-start-training");
         if (button) button.disabled = true;
 
@@ -407,7 +466,9 @@ const Training = {
                 const data = await res.json();
 
                 if (progressBar) progressBar.style.width = `${data.progress_percent}%`;
-                if (statusText) statusText.textContent = `Status: ${data.status.toUpperCase()} (${data.current_step}/${data.total_steps})`;
+                const eta = data.eta_seconds ? ` · ETA ${Math.max(1, Math.round(data.eta_seconds / 60))} min` : "";
+                const engine = data.engine ? ` · ${data.engine}` : "";
+                if (statusText) statusText.textContent = `Status: ${data.status.toUpperCase()} (${data.current_step}/${data.total_steps})${engine}${eta}`;
                 const telemetryVerified = data.telemetry_verified === true || data.metrics_verified === true;
                 if (lossText) lossText.textContent = telemetryVerified
                     ? `Current Loss: ${data.current_loss ?? "N/A"}`
@@ -424,7 +485,7 @@ const Training = {
                     logViewer.scrollTop = logViewer.scrollHeight;
                 }
 
-                if (data.status === "completed" || data.status === "failed") {
+                if (data.status === "completed" || data.status === "failed" || data.status === "stopped") {
                     clearInterval(this.pollInterval);
                     const btn = document.getElementById("btn-start-training");
                     if (btn) {

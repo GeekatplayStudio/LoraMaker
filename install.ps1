@@ -64,21 +64,28 @@ Write-Host "`n[INFO] Detecting GPU and compute capabilities..." -ForegroundColor
 $nvidiaSmi = Get-Command nvidia-smi -ErrorAction SilentlyContinue
 if ($nvidiaSmi) {
     Write-Host "[INFO] NVIDIA GPU hardware detected via nvidia-smi." -ForegroundColor Green
-    Write-Host "[INFO] Installing PyTorch with CUDA 12.4 compute support..." -ForegroundColor Cyan
-    & $venvPython -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+    Write-Host "[INFO] Installing PyTorch with CUDA 12.6 compute support (driver 560+)..." -ForegroundColor Cyan
+    & $venvPython -m pip install --upgrade torch torchvision --index-url https://download.pytorch.org/whl/cu126
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "[WARN] CUDA 12.6 wheel install failed; retrying with CUDA 12.8 build..." -ForegroundColor Yellow
+        & $venvPython -m pip install --upgrade torch torchvision --index-url https://download.pytorch.org/whl/cu128
+    }
 } else {
-    Write-Host "[WARN] nvidia-smi not detected. Installing standard PyTorch..." -ForegroundColor Yellow
-    & $venvPython -m pip install torch torchvision torchaudio
+    Write-Host "[WARN] nvidia-smi not detected. Installing CPU PyTorch (training needs an NVIDIA GPU)..." -ForegroundColor Yellow
+    & $venvPython -m pip install --upgrade torch torchvision
 }
 
 # 6. Install dependencies
 Write-Host "`n[INFO] Installing studio packages from requirements.txt..." -ForegroundColor Cyan
-& $venvPython -m pip install -r requirements.txt
+& $venvPython -m pip install --upgrade -r requirements.txt
 
 # 7. Verification
 Write-Host "`n[INFO] Verifying environment health..." -ForegroundColor Cyan
 & $venvPython -c "import torch; print(f'  [OK] PyTorch: {torch.__version__} | CUDA: {torch.cuda.is_available()} | GPU: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else ''CPU''}')"
-& $venvPython -c "import diffusers, transformers, cv2, fastapi, uvicorn, safetensors, ollama; print('  [OK] Diffusers, Transformers, OpenCV, Ollama, & FastAPI loaded cleanly!')"
+& $venvPython -c "import diffusers, transformers, peft, cv2, fastapi, uvicorn, safetensors, ollama; print('  [OK] Diffusers', diffusers.__version__, '| Transformers', transformers.__version__, '| PEFT', peft.__version__, '| OpenCV, Ollama, FastAPI loaded cleanly!')"
+& $venvPython -c "import bitsandbytes; print('  [OK] bitsandbytes', bitsandbytes.__version__, '(8-bit AdamW available)')" 2>$null
+if ($LASTEXITCODE -ne 0) { Write-Host "  [WARN] bitsandbytes not importable; trainer will use standard AdamW." -ForegroundColor Yellow }
+Write-Host "`n[INFO] To prove training really works on this machine, run: .\verify_training.bat" -ForegroundColor Cyan
 
 Write-Host "`n==============================================================" -ForegroundColor Green
 Write-Host "  ✨ Geekatplay LoRA Maker installation completed successfully!" -ForegroundColor Green

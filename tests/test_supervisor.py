@@ -26,8 +26,12 @@ def test_supervisor_chat_model_intent():
     res = SupervisorAgent.process_chat_message("What models are supported?")
     assert res["tool_called"] == "get_available_models"
     assert "Model Vault" in res["reply"]
-    assert "FLUX.1" in res["reply"]
-    assert "Wan2.1" in res["reply"]
+    # The reply must reflect real capabilities, never a canned "all supported" list.
+    caps = res["data"]["training_capabilities"]
+    for arch in caps["architectures"]:
+        assert arch["name"] in res["reply"]
+        if not arch["available"]:
+            assert "Not available" in res["reply"]
 
 def test_visual_agent_guidance():
     guidance = VisualAgent.get_style_tokens_and_lora_advice("BendyBot", "1930s Rubber Hose Cel")

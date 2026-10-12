@@ -144,9 +144,12 @@ class VideoService:
     @staticmethod
     def suggest_keyframe_candidates(video_path: str, max_candidates: int = 8) -> List[Dict[str, Any]]:
         """
-        Analyzes video and samples evenly spaced keyframe positions across the timeline
-        to help the Visual/Supervisor agent propose key poses (A-pose, 3/4 turn, expressions).
+        Measures frame-to-frame change across the timeline and returns the
+        frames where the picture changes most (cuts, big pose changes).  Each
+        candidate carries its measured change score; no pose labels are invented.
         """
+        import numpy as np
+
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
             return []
@@ -157,21 +160,41 @@ class VideoService:
             if total_frames <= 0:
                 return []
 
-            step = max(1, total_frames // (max_candidates + 1))
-            indices = [step * (i + 1) for i in range(max_candidates) if step * (i + 1) < total_frames]
+            # Sample at most ~400 frames evenly to keep analysis fast.
+            stride = max(1, total_frames // 400)
+            prev = None
+            scores: List[tuple] = []
+            for f_idx in range(0, total_frames, stride):
+                cap.set(cv2.CAP_PROP_POS_FRAMES, f_idx)
+                ret, frame = cap.read()
+                if not ret or frame is None:
+                    continue
+                small = cv2.resize(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), (96, 54), interpolation=cv2.INTER_AREA).astype(np.float32)
+                if prev is not None:
+                    scores.append((f_idx, float(np.mean(np.abs(small - prev)))))
+                prev = small
+            if not scores:
+                return []
+
+            # Pick the strongest changes, keeping candidates spread apart.
+            min_gap = max(1, total_frames // (max_candidates * 2))
+            chosen: List[tuple] = []
+            for f_idx, score in sorted(scores, key=lambda x: x[1], reverse=True):
+                if all(abs(f_idx - c[0]) >= min_gap for c in chosen):
+                    chosen.append((f_idx, score))
+                if len(chosen) >= max_candidates:
+                    break
+            max_score = max(sc for _, sc in scores) or 1.0
 
             candidates = []
-            pose_types = ["Establishing Shot", "A-Pose Character", "Turnaround 3/4 Pose", "Profile View", "Action / Motion Pose", "Close-up Expression", "Dramatic Lighting", "Final Staging"]
-
-            for idx, f_idx in enumerate(indices):
-                pose_label = pose_types[idx % len(pose_types)]
+            for f_idx, score in sorted(chosen):
                 sec = f_idx / fps
                 candidates.append({
                     "frame_index": f_idx,
                     "timestamp": round(sec, 2),
                     "timestamp_formatted": VideoService._format_time(sec),
-                    "suggested_pose": pose_label,
-                    "reason": f"Keyframe candidate at {VideoService._format_time(sec)} for {pose_label.lower()}"
+                    "change_score": round(score / max_score, 3),
+                    "reason": f"Visual change {round(100 * score / max_score)}% of the strongest change in this video at {VideoService._format_time(sec)}"
                 })
             return candidates
         finally:

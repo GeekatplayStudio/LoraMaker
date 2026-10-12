@@ -59,14 +59,49 @@ Never squeeze or stretch your training subjects:
 - **Story Agent**: Formulates multi-scene screenplay storyboards (JSON) formatted with camera and motion cues.
 - **Trainer Agent**: Audits training readiness and formats Kohya_ss & ComfyUI configurations.
 
-### 5. Multi-Architecture LoRA Training
+### 5. Verified, Step-Budgeted Training Presets
+Every run uses a preset that fixes the number of optimizer steps up-front, caches latents and text-encoder outputs once, trains the UNet only, and caps resolution to what your GPU tier can hold. Run time is therefore predictable no matter how many keyframes you have.
+
+| Preset | Steps | Resolution | Rank / Alpha | LR | Typical time (12 GB) |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| 🧪 **Smoke test** | 20 | 512 | 4 / 4 | 1e-4 | ~3 min |
+| 🚀 **Fast character** (default) | 400 | 768 | 8 / 8 | 1.5e-4 | ~14 min |
+| ⚖️ **Balanced** | 900 | 1024 | 16 / 8 | 1e-4 | ~35 min |
+| 💎 **Quality** | 1600 | 1024 | 32 / 16 | 8e-5 | ~65 min |
+| 🛠️ **Custom** | your fields | your fields | your fields | your fields | – |
+
+Two engines are used, and the Studio tells you which one it picked:
+- **Kohya sd-scripts** (SDXL, FLUX.1) when a checkout is found via `KOHYA_ROOT`, `KOHYA_SD_SCRIPTS_DIR`, or the usual `D:\kohya_ss\sd-scripts` locations. The trainer runs with Kohya's own `venv` interpreter when present.
+- **Built-in Diffusers/PEFT trainer** (SDXL) when Kohya is not installed. Real gradient descent on the UNet attention projections, saved in Kohya/ComfyUI key format.
+
+Every finished run is verified before it is reported as complete: the safetensors file must contain LoRA pairs for the right architecture **and** non-zero up-projection tensors (they start at zero and only training changes them). Architectures without a verified trainer (Qwen, Z-Image, Wan, LTX, Hunyuan) are shown as unavailable rather than "trained" by a stand-in.
+
+**Prove it works on your machine** (after `install.bat`):
+```bash
+verify_training.bat            # 20 real steps on your SDXL checkpoint, or a tiny test model
+python verify_training.py --tiny   # CPU-only check of the pipeline (~10 s)
+pytest tests/test_training_e2e.py  # full pipeline on CPU: trains, verifies, loads, checks learning
+```
+
+Every run also records a **learning check**: the loss on a fixed batch is measured before and after training and stored in `<model>.metrics.json` as `fixed_batch_loss_before/after`. The end-to-end test asserts that it drops, that the adapter changes the UNet output, and that scale 0 reproduces the base model.
+
+### No simulations policy
+Nothing in the Studio fabricates a result. Concretely:
+- Training telemetry comes only from the trainer's stdout; the UI shows "telemetry not verified" otherwise.
+- A LoRA is "verified" only when its tensors are trained (non-zero up-projections) and, when present, its provenance file hashes match.
+- Captioning returns an error when Ollama is unavailable instead of writing a generic caption.
+- Keyframe suggestions are ranked by measured frame-to-frame change, with the score shown.
+- Storyboards generated from the built-in template are labelled `"source": "template"`.
+- Test renders require a real CUDA SDXL pipeline; there is no placeholder image.
+
+### 6. Multi-Architecture LoRA Training
 - **SDXL 1.0**: Native Kohya format with 640-dim and 1280-dim UNet cross-attention adapters.
 - **FLUX.1 [dev/schnell]**: 3072-dim single and double transformer DiT blocks.
 - **Qwen & Z-Image Support**: HuggingFace cache discovery and model auto-tuning.
 - **Video Diffusion**: Wan2.1, Hunyuan Video, Cosmos, LTX-Video spatiotemporal modules.
 - **Dual Mode**: Authentic PyTorch GPU gradient descent or dry-run validation.
 
-### 6. Interactive Model Diagnostics & Test Bench
+### 7. Interactive Model Diagnostics & Test Bench
 - **Frobenius Norm & Weight Telemetry**: Inspect raw adapter tensors ($\|W_{\text{down}}\|_F$, $\|W_{\text{up}}\|_F$) and effective weight deltas.
 - **LoRA Weight Scale Slider (`0.00` to `1.50`)**:
   - `0.00`: Completely unloads LoRA adapter weights for a 100% clean baseline render.
@@ -74,12 +109,12 @@ Never squeeze or stretch your training subjects:
   - `1.20+`: High-intensity artistic stylization.
 - **1-Click ComfyUI Deployment**: Instantly copy trained weights to ComfyUI `models/loras/`.
 
-### 7. Multi-Drive Storage & Visual Path Browser
+### 8. Multi-Drive Storage & Visual Path Browser
 - **Drive Protection**: Redirect heavy base model downloads to external secondary drives (e.g., `O:\ComfyUI\models`) to keep `C:` drive clean.
 - **Multiple Search Roots**: Add and remove multiple model directories across `C:`, `D:`, `F:`, `O:`, etc.
 - **Visual Directory Browser**: Navigate folders interactively without manual typing.
 
-### 8. System Error & Diagnostics Telemetry Console
+### 9. System Error & Diagnostics Telemetry Console
 - **Live Exception Tracking**: Captures Python stack traces, HTTP status, and request payloads.
 - **Context-Aware Suggestions**: Intelligent recommendations for missing checkpoints, uncaptioned frames, and VRAM limits.
 - **1-Click Diagnostic Report**: Copies a complete, formatted Markdown snapshot of system state and errors directly to the clipboard.
@@ -102,7 +137,7 @@ Never squeeze or stretch your training subjects:
 1. Double-click **`install.bat`** (or run `.\install.ps1` in PowerShell). This automatically:
    - Verifies Python 3.10+
    - Creates and activates a dedicated virtual environment (`venv`)
-   - Detects your NVIDIA GPU and installs PyTorch with CUDA 12.4
+   - Detects your NVIDIA GPU and installs PyTorch with CUDA 12.6 (falls back to 12.8)
    - Installs all dependencies from `requirements.txt`
 2. Double-click **`start.bat`** (or run `.\start.ps1` in PowerShell) to launch the Studio and automatically open [http://127.0.0.1:7860](http://127.0.0.1:7860).
 
@@ -116,8 +151,8 @@ cd LoraMaker
 python -m venv venv
 venv\Scripts\activate
 
-# Install PyTorch with CUDA 12.4 & dependencies
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+# Install PyTorch with CUDA 12.6 & dependencies
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu126
 pip install -r requirements.txt
 
 # Launch application

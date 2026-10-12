@@ -1,3 +1,4 @@
+import os
 """Unit and Integration Tests for Hardware Auto-Detection, Presets, and System API
 Geekatplay Studio - Vladimir Chopine
 Repository: https://github.com/GeekatplayStudio/LoraMaker.git
@@ -132,6 +133,7 @@ def test_api_settings_endpoints(tmp_path):
     assert scan_data["categories"]["checkpoints"]["count"] == 1
     assert scan_data["categories"]["loras"]["count"] == 1
 
+@pytest.mark.skipif(os.name != "nt", reason="drive-letter root listing is Windows-only")
 def test_api_system_browse_endpoints(tmp_path):
     """Verify GET and POST /api/system/browse endpoints for interactive directory exploration."""
     # 1. Root / Drives query
